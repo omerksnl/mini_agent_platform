@@ -161,7 +161,7 @@ class ConversationService:
                     self.db,
                 )
             else:
-                if conversation.agent.collections:
+                if conversation.agent.collections or conversation.agent.agent_type == "supervisor":
                     llm_result = llm_client.complete(
                         conversation.agent,
                         llm_messages,

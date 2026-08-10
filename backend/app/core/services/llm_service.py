@@ -22,6 +22,7 @@ from app.models import Attachment
 from sqlalchemy.orm import Session
 from app.core.tools.pdf_tools import build_pdf_to_text_tool
 from app.core.tools.collection_tools import build_collection_search_tool
+from app.core.tools.supervisor_tools import build_delegation_tools
 from app.core.candidate_profile import normalize_candidate_profile_json
 
 
@@ -111,13 +112,20 @@ class OpenRouterLLMClient:
         attachments: list[Attachment] | None = None,
         db: Session | None = None,
     ) -> LLMResult:
+        is_supervisor = agent.agent_type == "supervisor"
+        if is_supervisor and not agent.managed_agents:
+            raise LLMError("This supervisor has no managed agents")
+        if is_supervisor and db is None:
+            raise LLMError("Supervisor database context is unavailable")
         cost_callback = ApiCostCallbackHandler(
             self.settings.llm_input_cost_per_million_usd,
             self.settings.llm_output_cost_per_million_usd,
         )
         max_tokens = (
             self.settings.cv_extraction_max_tokens
-            if attachments
+            if attachments and not is_supervisor
+            else self.settings.supervisor_max_tokens
+            if is_supervisor
             else self.settings.rag_max_tokens
             if agent.collections
             else self.settings.llm_max_tokens
@@ -135,7 +143,7 @@ class OpenRouterLLMClient:
             for name in agent.system_tools
             if name in SYSTEM_TOOL_MAP
         ]
-        if attachments and "pdf_to_text" in agent.system_tools:
+        if attachments and not is_supervisor and "pdf_to_text" in agent.system_tools:
             if db is None:
                 raise LLMError("PDF tool database context is unavailable")
             selected_system_tools.append(build_pdf_to_text_tool(db, attachments))
@@ -144,7 +152,32 @@ class OpenRouterLLMClient:
             if db is None:
                 raise LLMError("Collection tool database context is unavailable")
             selected_tools.append(build_collection_search_tool(db, agent))
-        if attachments:
+        if is_supervisor:
+            def delegate_to_child(child: Agent, task: str) -> str:
+                child_attachments = attachments if attachments and "pdf_to_text" in child.system_tools else []
+                child_content = task.strip()
+                if child_attachments:
+                    attachment_lines = "\n".join(
+                        f"- attachment_id={item.id}; filename={item.original_name}; type={item.content_type}"
+                        for item in child_attachments
+                    )
+                    child_content += (
+                        "\n\nATTACHMENTS AVAILABLE TO TOOLS\n"
+                        + attachment_lines
+                        + "\nUse pdf_to_text before making claims about PDF contents."
+                    )
+                child_result = self.complete(
+                    child,
+                    [{"role": "user", "content": child_content}],
+                    child.http_tools,
+                    child_attachments,
+                    db,
+                )
+                return child_result.content
+
+            selected_tools.extend(build_delegation_tools(agent, delegate_to_child))
+
+        if attachments and not is_supervisor:
             if "pdf_to_text" not in agent.system_tools:
                 raise LLMError("Enable pdf_to_text on this agent before sending a PDF")
             selected_skills = [skill for skill in agent.skills if skill.name == "cv_extraction"]
@@ -271,10 +304,24 @@ class OpenRouterLLMClient:
         messages: list[dict[str, str]],
         cost_callback: ApiCostCallbackHandler,
     ) -> list[Any]:
-        is_rag_run = any(getattr(tool, "name", "") == "collection_search" for tool in tools)
-        tool_limit = self.settings.rag_tool_call_limit if is_rag_run else self.settings.agent_tool_call_limit
-        model_limit = self.settings.rag_model_call_limit if is_rag_run else self.settings.agent_model_call_limit
-        recursion_limit = self.settings.rag_recursion_limit if is_rag_run else self.settings.agent_recursion_limit
+        tool_names = {getattr(tool, "name", "") for tool in tools}
+        is_supervisor_run = any(name.startswith("delegate_to_") for name in tool_names)
+        is_rag_run = "collection_search" in tool_names
+        tool_limit = (
+            self.settings.supervisor_tool_call_limit if is_supervisor_run
+            else self.settings.rag_tool_call_limit if is_rag_run
+            else self.settings.agent_tool_call_limit
+        )
+        model_limit = (
+            self.settings.supervisor_model_call_limit if is_supervisor_run
+            else self.settings.rag_model_call_limit if is_rag_run
+            else self.settings.agent_model_call_limit
+        )
+        recursion_limit = (
+            self.settings.supervisor_recursion_limit if is_supervisor_run
+            else self.settings.rag_recursion_limit if is_rag_run
+            else self.settings.agent_recursion_limit
+        )
         agent_graph = create_agent(
             model=model,
             tools=tools,
@@ -366,10 +413,22 @@ class OpenRouterLLMClient:
                 "Do not claim to have processed a document. If the user asks to process one, ask them to attach it. "
                 "If the user asks how the capability works, explain it normally without pretending to run the skill."
             )
+        supervisor = ""
+        if agent.agent_type == "supervisor":
+            managed = ", ".join(item.name for item in agent.managed_agents)
+            supervisor = (
+                "SUPERVISOR MODE\n"
+                f"You coordinate these managed agents: {managed}. "
+                "Delegate specialist work through the delegate_to tools instead of performing it yourself. "
+                "For a multi-stage request, call agents in the required order and pass the complete output of an "
+                "earlier agent inside the next delegation task. Managed agents have isolated context and see only "
+                "the task you send them. Synthesize their results faithfully and never claim an agent was called "
+                "unless its delegation tool was actually used."
+            )
         return build_effective_system_prompt(
             agent,
             "\n\n".join(
-                part for part in (self.TOOL_RESULT_INSTRUCTIONS, mandatory, unavailable) if part
+                part for part in (self.TOOL_RESULT_INSTRUCTIONS, supervisor, mandatory, unavailable) if part
             ),
             skills,
         )
