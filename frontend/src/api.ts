@@ -1,0 +1,268 @@
+export type User = {
+  id: string;
+  email: string;
+  full_name: string;
+  tenant_id: string;
+};
+
+export type MeResponse = {
+  user: User;
+  tenant_name: string;
+};
+
+export type Agent = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  system_prompt: string;
+  model: string;
+  temperature: number;
+  system_tools: string[];
+  tool_ids: string[];
+  skill_ids: string[];
+  collection_ids: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgentInput = {
+  name: string;
+  system_prompt: string;
+  model: string;
+  temperature: number;
+  system_tools: string[];
+  tool_ids: string[];
+  skill_ids: string[];
+  collection_ids: string[];
+};
+
+export type Skill = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  output_schema: Record<string, unknown> | null;
+  required_system_tools: string[];
+  required_tool_ids: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SkillInput = Pick<
+  Skill,
+  "name" | "description" | "instructions" | "output_schema" | "required_system_tools" | "required_tool_ids" | "is_active"
+>;
+
+export type ToolParameter = {
+  name: string;
+  type: "string" | "integer" | "number" | "boolean";
+  description: string;
+  required: boolean;
+};
+
+export type HttpTool = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string;
+  url: string;
+  method: "GET" | "POST";
+  parameters: ToolParameter[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type HttpToolInput = Pick<
+  HttpTool,
+  "name" | "description" | "url" | "method" | "parameters"
+>;
+
+export type Conversation = {
+  id: string;
+  tenant_id: string;
+  agent_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Message = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  used_tools: string[];
+  used_skills: string[];
+  api_cost_usd: number;
+  attachments: Attachment[];
+  created_at: string;
+};
+
+export type Attachment = {
+  id: string;
+  original_name: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+export type CollectionDocument = { id: string; original_name: string; content_type: string; size_bytes: number; chunk_count: number; created_at: string };
+export type Collection = { id: string; tenant_id: string; name: string; description: string; documents: CollectionDocument[]; created_at: string; updated_at: string };
+
+const TOKEN_KEY = "access_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  const token = getToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(path, { ...options, headers });
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = typeof data.detail === "string" ? data.detail : "Request failed";
+    throw new Error(detail);
+  }
+  return data as T;
+}
+
+export const api = {
+  register(body: {
+    email: string;
+    password: string;
+    full_name: string;
+    tenant_name: string;
+  }) {
+    return request<{ access_token: string }>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  login(body: { email: string; password: string }) {
+    return request<{ access_token: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  me() {
+    return request<MeResponse>("/api/auth/me");
+  },
+  listAgents() {
+    return request<Agent[]>("/api/agents");
+  },
+  createAgent(body: AgentInput) {
+    return request<Agent>("/api/agents", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  updateAgent(id: string, body: Partial<AgentInput>) {
+    return request<Agent>(`/api/agents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+  deleteAgent(id: string) {
+    return request<void>(`/api/agents/${id}`, { method: "DELETE" });
+  },
+  listTools() {
+    return request<HttpTool[]>("/api/tools");
+  },
+  createTool(body: HttpToolInput) {
+    return request<HttpTool>("/api/tools", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  updateTool(id: string, body: Partial<HttpToolInput>) {
+    return request<HttpTool>(`/api/tools/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+  deleteTool(id: string) {
+    return request<void>(`/api/tools/${id}`, { method: "DELETE" });
+  },
+  listSkills() {
+    return request<Skill[]>("/api/skills");
+  },
+  createSkill(body: SkillInput) {
+    return request<Skill>("/api/skills", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  updateSkill(id: string, body: Partial<SkillInput>) {
+    return request<Skill>(`/api/skills/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+  deleteSkill(id: string) {
+    return request<void>(`/api/skills/${id}`, { method: "DELETE" });
+  },
+  listCollections() { return request<Collection[]>("/api/collections"); },
+  createCollection(body: { name: string; description: string }) {
+    return request<Collection>("/api/collections", { method: "POST", body: JSON.stringify(body) });
+  },
+  deleteCollection(id: string) { return request<void>(`/api/collections/${id}`, { method: "DELETE" }); },
+  uploadCollectionDocument(id: string, file: File) {
+    const body = new FormData(); body.append("file", file);
+    return request<CollectionDocument>(`/api/collections/${id}/documents`, { method: "POST", body });
+  },
+  deleteCollectionDocument(collectionId: string, id: string) { return request<void>(`/api/collections/${collectionId}/documents/${id}`, { method: "DELETE" }); },
+  listConversations() {
+    return request<Conversation[]>("/api/conversations");
+  },
+  createConversation(body: { agent_id: string; title: string }) {
+    return request<Conversation>("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  deleteConversation(id: string) {
+    return request<void>(`/api/conversations/${id}`, { method: "DELETE" });
+  },
+  listMessages(conversationId: string) {
+    return request<Message[]>(`/api/conversations/${conversationId}/messages`);
+  },
+  sendMessage(conversationId: string, content: string) {
+    return request<Message>(`/api/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  },
+  uploadAttachment(file: File) {
+    const body = new FormData();
+    body.append("file", file);
+    return request<Attachment>("/api/attachments", { method: "POST", body });
+  },
+  sendMessageWithAttachments(conversationId: string, content: string, attachmentIds: string[]) {
+    return request<Message>(`/api/conversations/${conversationId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, attachment_ids: attachmentIds }),
+    });
+  },
+};
