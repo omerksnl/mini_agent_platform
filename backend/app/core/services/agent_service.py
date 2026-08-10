@@ -41,22 +41,27 @@ class AgentService:
 
     def create_agent(self, tenant_id: UUID, payload: AgentCreate) -> Agent:
         self._validate_system_tools(payload.system_tools)
+        if payload.agent_type == "normal" and payload.managed_agent_ids:
+            raise AgentError("Normal agents cannot manage other agents")
         try:
             http_tools = ToolService(self.db).get_tools(payload.tool_ids, tenant_id)
         except ToolError as exc:
             raise AgentError(exc.message, exc.status_code) from exc
         skills = self._get_skills(payload.skill_ids, tenant_id)
         collections = self._get_collections(payload.collection_ids, tenant_id)
+        managed_agents = self._get_managed_agents(payload.managed_agent_ids, tenant_id)
         self._validate_skill_requirements(skills, payload.system_tools, http_tools)
         agent = Agent(
             tenant_id=tenant_id,
             name=payload.name,
+            agent_type=payload.agent_type,
             system_prompt=payload.system_prompt,
             model=payload.model,
             temperature=payload.temperature,
             system_tools=payload.system_tools,
             http_tools=http_tools,
             collections=collections,
+            managed_agents=managed_agents,
         )
         agent.skill_links = [AgentSkill(skill=skill, position=index) for index, skill in enumerate(skills)]
         self.db.add(agent)
@@ -70,6 +75,14 @@ class AgentService:
         tool_ids = data.pop("tool_ids", None)
         skill_ids = data.pop("skill_ids", None)
         collection_ids = data.pop("collection_ids", None)
+        managed_agent_ids = data.pop("managed_agent_ids", None)
+        target_type = data.get("agent_type", agent.agent_type)
+        if target_type == "supervisor" and agent.supervisor_id is not None:
+            raise AgentError("A managed agent cannot become a supervisor")
+        if target_type == "normal":
+            requested_managed = managed_agent_ids if managed_agent_ids is not None else agent.managed_agent_ids
+            if requested_managed:
+                raise AgentError("Normal agents cannot manage other agents")
         if "system_tools" in data:
             self._validate_system_tools(data["system_tools"])
         if tool_ids is not None:
@@ -87,6 +100,10 @@ class AgentService:
             agent.skill_links = [AgentSkill(skill=skill, position=index) for index, skill in enumerate(skills)]
         if collection_ids is not None:
             agent.collections = self._get_collections(collection_ids, tenant_id)
+        if managed_agent_ids is not None:
+            agent.managed_agents = self._get_managed_agents(
+                managed_agent_ids, tenant_id, supervisor_id=agent.id
+            )
         for key, value in data.items():
             setattr(agent, key, value)
         self.db.commit()
@@ -117,6 +134,36 @@ class AgentService:
             return CollectionService(self.db).get_many(collection_ids, tenant_id)
         except CollectionError as exc:
             raise AgentError(exc.message, exc.status_code) from exc
+
+    def _get_managed_agents(
+        self,
+        agent_ids: list[UUID],
+        tenant_id: UUID,
+        supervisor_id: UUID | None = None,
+    ) -> list[Agent]:
+        if not agent_ids:
+            return []
+        unique_ids = list(dict.fromkeys(agent_ids))
+        if len(unique_ids) != len(agent_ids):
+            raise AgentError("Managed agent selection contains duplicates")
+        if supervisor_id is not None and supervisor_id in unique_ids:
+            raise AgentError("A supervisor cannot manage itself")
+        agents = list(self.db.scalars(select(Agent).where(
+            Agent.id.in_(unique_ids), Agent.tenant_id == tenant_id
+        )).all())
+        if len(agents) != len(unique_ids):
+            raise AgentError("One or more managed agents were not found", 404)
+        by_id = {item.id: item for item in agents}
+        ordered = [by_id[item_id] for item_id in unique_ids]
+        if any(item.agent_type != "normal" for item in ordered):
+            raise AgentError("Supervisors can manage only normal agents")
+        occupied = [
+            item.name for item in ordered
+            if item.supervisor_id is not None and item.supervisor_id != supervisor_id
+        ]
+        if occupied:
+            raise AgentError("Agents already managed by another supervisor: " + ", ".join(occupied), 409)
+        return ordered
 
     @staticmethod
     def _validate_skill_requirements(skills: list[Skill], system_tools: list[str], http_tools: list) -> None:
