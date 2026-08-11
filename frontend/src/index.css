@@ -282,6 +282,204 @@ label {
   font-size: 0.95rem;
 }
 
+.panel-actions,
+.workflow-step-actions,
+.workflow-section-head,
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-section-head {
+  justify-content: space-between;
+  margin-top: 0.4rem;
+}
+
+.workflow-section-head h2 { font-size: 0.9rem; }
+.form-actions { justify-content: flex-end; }
+.workflow-steps { display: grid; }
+
+.execution-mode-panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.execution-mode-panel h1 { font-size: 1rem; margin-bottom: 4px; }
+.execution-mode-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+
+.execution-mode-card {
+  display: grid;
+  gap: 5px;
+  min-height: 82px;
+  padding: 14px;
+  text-align: left;
+  color: var(--text-dark);
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.execution-mode-card strong { color: var(--primary); }
+.execution-mode-card small { line-height: 1.45; }
+.execution-mode-card.active { border: 2px solid var(--primary); background: #fff7f7; }
+.multi-agent-empty {
+  min-height: 260px;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.supervisor-system-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.supervisor-create-form {
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--primary);
+  border-radius: 4px;
+  background: var(--input-bg);
+}
+
+.supervisor-create-form h2 { font-size: 0.9rem; }
+
+.supervisor-system {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input-bg);
+}
+
+.supervisor-system-head {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border: 0;
+  text-align: left;
+  color: var(--text-dark);
+  background: transparent;
+}
+
+.supervisor-system-head > span:nth-child(2) { display: grid; gap: 3px; }
+.supervisor-system-head strong { color: var(--primary); }
+.supervisor-system-head small, .managed-agent-card small { color: var(--text); }
+
+.supervisor-summary small:last-child { color: var(--muted); }
+
+.supervisor-managed-area {
+  padding: 2px 14px 16px 52px;
+}
+
+.managed-section-label {
+  margin: 0 0 8px;
+  color: var(--text-dark);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.supervisor-managed-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.managed-agent-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--primary);
+  border-radius: 3px;
+  background: var(--box);
+}
+
+.managed-agent-card .agent-name-line {
+  min-width: 0;
+  gap: 10px;
+}
+
+.managed-agent-card .agent-name-line strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managed-agent-model {
+  overflow-wrap: anywhere;
+  color: var(--text-dark);
+  font-size: 0.72rem;
+}
+
+.workflow-step-editor {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--primary);
+  border-radius: 4px;
+  background: var(--input-bg);
+}
+
+.workflow-step-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.workflow-step-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workflow-route-preview {
+  min-height: 70px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  color: var(--primary);
+}
+
+.workflow-route-preview > span { font-size: 1.35rem; }
+.workflow-route-preview label { width: min(220px, 100%); color: var(--text); }
+.workflow-list .agent-item span { display: grid; gap: 4px; text-align: left; }
+.workflow-list .agent-item small { color: var(--muted); }
+.workflow-list .agent-item.selected { border-color: var(--primary); }
+.btn-compact { padding: 6px 9px; font-size: 0.7rem; }
+
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-line input { width: auto; }
+
+@media (max-width: 720px) {
+  .execution-mode-options { grid-template-columns: 1fr; }
+  .supervisor-managed-grid { grid-template-columns: 1fr; }
+  .supervisor-managed-area { padding-left: 14px; }
+  .workflow-step-grid { grid-template-columns: 1fr; }
+  .workflow-step-head { align-items: flex-start; flex-direction: column; }
+  .panel-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
+
 .panel-accent {
   background: var(--primary);
   color: var(--white);

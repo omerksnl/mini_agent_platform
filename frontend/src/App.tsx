@@ -9,6 +9,7 @@ import { RegisterPage } from "./pages/RegisterPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
+import { WorkflowsPage } from "./pages/WorkflowsPage";
 
 export default function App() {
   return (
@@ -23,6 +24,8 @@ export default function App() {
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/collections" element={<CollectionsPage />} />
+            <Route path="/multi-agent" element={<WorkflowsPage />} />
+            <Route path="/workflows" element={<Navigate to="/multi-agent" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

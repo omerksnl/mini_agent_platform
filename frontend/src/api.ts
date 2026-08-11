@@ -117,6 +117,43 @@ export type Attachment = {
 export type CollectionDocument = { id: string; original_name: string; content_type: string; size_bytes: number; chunk_count: number; created_at: string };
 export type Collection = { id: string; tenant_id: string; name: string; description: string; documents: CollectionDocument[]; created_at: string; updated_at: string };
 
+export type WorkflowStepType = "agent" | "http_tool" | "system_tool" | "human_wait";
+export type WorkflowRouteCondition = "success" | "failure" | "input_available" | "always";
+export type WorkflowStepInput = {
+  step_key: string;
+  name: string;
+  step_type: WorkflowStepType;
+  position: number;
+  agent_id: string | null;
+  http_tool_id: string | null;
+  system_tool_name: string | null;
+  config: Record<string, unknown>;
+};
+export type WorkflowRouteInput = {
+  source_step_key: string;
+  target_step_key: string;
+  condition: WorkflowRouteCondition;
+  priority: number;
+  config: Record<string, unknown>;
+};
+export type WorkflowInput = {
+  name: string;
+  description: string;
+  is_active: boolean;
+  steps: WorkflowStepInput[];
+  routes: WorkflowRouteInput[];
+};
+export type WorkflowStep = WorkflowStepInput & { id: string };
+export type WorkflowRoute = WorkflowRouteInput & { id: string };
+export type Workflow = WorkflowInput & {
+  id: string;
+  tenant_id: string;
+  steps: WorkflowStep[];
+  routes: WorkflowRoute[];
+  created_at: string;
+  updated_at: string;
+};
+
 const TOKEN_KEY = "access_token";
 
 export function getToken(): string | null {
@@ -243,6 +280,14 @@ export const api = {
     return request<CollectionDocument>(`/api/collections/${id}/documents`, { method: "POST", body });
   },
   deleteCollectionDocument(collectionId: string, id: string) { return request<void>(`/api/collections/${collectionId}/documents/${id}`, { method: "DELETE" }); },
+  listWorkflows() { return request<Workflow[]>("/api/workflows"); },
+  createWorkflow(body: WorkflowInput) {
+    return request<Workflow>("/api/workflows", { method: "POST", body: JSON.stringify(body) });
+  },
+  updateWorkflow(id: string, body: Partial<WorkflowInput>) {
+    return request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+  },
+  deleteWorkflow(id: string) { return request<void>(`/api/workflows/${id}`, { method: "DELETE" }); },
   listConversations() {
     return request<Conversation[]>("/api/conversations");
   },
