@@ -14,6 +14,8 @@ export type Agent = {
   id: string;
   tenant_id: string;
   name: string;
+  agent_type: "normal" | "supervisor";
+  supervisor_id: string | null;
   system_prompt: string;
   model: string;
   temperature: number;
@@ -21,12 +23,14 @@ export type Agent = {
   tool_ids: string[];
   skill_ids: string[];
   collection_ids: string[];
+  managed_agent_ids: string[];
   created_at: string;
   updated_at: string;
 };
 
 export type AgentInput = {
   name: string;
+  agent_type: "normal" | "supervisor";
   system_prompt: string;
   model: string;
   temperature: number;
@@ -34,6 +38,7 @@ export type AgentInput = {
   tool_ids: string[];
   skill_ids: string[];
   collection_ids: string[];
+  managed_agent_ids: string[];
 };
 
 export type Skill = {
@@ -95,6 +100,7 @@ export type Message = {
   content: string;
   used_tools: string[];
   used_skills: string[];
+  used_agents: string[];
   api_cost_usd: number;
   attachments: Attachment[];
   created_at: string;
@@ -142,7 +148,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = typeof data.detail === "string" ? data.detail : "Request failed";
+    const detail = typeof data.detail === "string"
+      ? data.detail
+      : response.status === 504
+        ? "The agent took too long to respond. Please try again."
+        : `Request failed (${response.status})`;
     throw new Error(detail);
   }
   return data as T;

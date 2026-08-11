@@ -7,6 +7,7 @@ import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 
 const emptyForm: AgentInput = {
   name: "",
+  agent_type: "normal",
   system_prompt: "You are a helpful assistant.",
   model: DEFAULT_MODEL,
   temperature: 0.7,
@@ -14,6 +15,7 @@ const emptyForm: AgentInput = {
   tool_ids: [],
   skill_ids: [],
   collection_ids: [],
+  managed_agent_ids: [],
 };
 
 type PanelMode = "idle" | "create" | "edit";
@@ -32,6 +34,19 @@ export function AgentsPage() {
   const [saving, setSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Agent | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [expandedSupervisors, setExpandedSupervisors] = useState<Set<string>>(new Set());
+
+  function toggleSupervisor(supervisorId: string) {
+    setExpandedSupervisors((current) => {
+      const next = new Set(current);
+      if (next.has(supervisorId)) {
+        next.delete(supervisorId);
+      } else {
+        next.add(supervisorId);
+      }
+      return next;
+    });
+  }
 
   async function loadAgents() {
     setLoading(true);
@@ -72,6 +87,7 @@ export function AgentsPage() {
     setEditingId(agent.id);
     setForm({
       name: agent.name,
+      agent_type: agent.agent_type,
       system_prompt: agent.system_prompt,
       model: agent.model,
       temperature: agent.temperature,
@@ -79,6 +95,7 @@ export function AgentsPage() {
       tool_ids: agent.tool_ids,
       skill_ids: agent.skill_ids,
       collection_ids: agent.collection_ids,
+      managed_agent_ids: agent.managed_agent_ids,
     });
     setError("");
   }
@@ -123,6 +140,18 @@ export function AgentsPage() {
     }
   }
 
+  const supervisors = agents.filter((agent) => agent.agent_type === "supervisor");
+  const independentAgents = agents.filter(
+    (agent) => agent.agent_type === "normal" && agent.supervisor_id === null,
+  );
+  const editingAgent = agents.find((agent) => agent.id === editingId) ?? null;
+  const managedAgentCandidates = agents.filter(
+    (agent) =>
+      agent.agent_type === "normal" &&
+      agent.id !== editingId &&
+      (agent.supervisor_id === null || agent.supervisor_id === editingId),
+  );
+
   return (
     <div className="app-shell">
       <header className="box topbar">
@@ -155,22 +184,54 @@ export function AgentsPage() {
           {!loading && agents.length === 0 ? (
             <p>No agents yet. Use New agent to create one.</p>
           ) : null}
-          <ul className="agent-list">
-            {agents.map((agent) => (
-              <li key={agent.id} className={editingId === agent.id ? "active" : ""}>
+          <ul className="agent-list agent-tree">
+            {supervisors.map((supervisor) => (
+              <li key={supervisor.id} className="agent-tree-group">
+                <div className={`agent-tree-row ${editingId === supervisor.id ? "active" : ""}`}>
+                  <button
+                    type="button"
+                    className={`tree-toggle ${expandedSupervisors.has(supervisor.id) ? "expanded" : ""}`}
+                    onClick={() => toggleSupervisor(supervisor.id)}
+                    aria-expanded={expandedSupervisors.has(supervisor.id)}
+                    aria-label={`${expandedSupervisors.has(supervisor.id) ? "Collapse" : "Expand"} ${supervisor.name}`}
+                    disabled={supervisor.managed_agent_ids.length === 0}
+                  >
+                    <span aria-hidden="true" />
+                  </button>
+                  <button type="button" className="agent-item" onClick={() => startEdit(supervisor)}>
+                    <span className="agent-name-line"><strong>{supervisor.name}</strong><span className="agent-type-badge supervisor">Supervisor</span></span>
+                    <span className="agent-meta">{supervisor.managed_agent_ids.length} managed agents · {supervisor.model}</span>
+                  </button>
+                  <button type="button" className="btn btn-danger" onClick={() => setPendingDelete(supervisor)}>Delete</button>
+                </div>
+                {supervisor.managed_agent_ids.length > 0 && expandedSupervisors.has(supervisor.id) ? (
+                  <ul className="managed-agent-list">
+                    {supervisor.managed_agent_ids
+                      .map((id) => agents.find((agent) => agent.id === id))
+                      .filter((agent): agent is Agent => Boolean(agent))
+                      .map((agent) => (
+                        <li key={agent.id} className={`agent-tree-row managed ${editingId === agent.id ? "active" : ""}`}>
+                          <button type="button" className="agent-item" onClick={() => startEdit(agent)}>
+                            <span className="agent-name-line"><strong>{agent.name}</strong><span className="agent-type-badge">Managed agent</span></span>
+                            <span className="agent-meta">{agent.model} · t={agent.temperature}</span>
+                          </button>
+                          <button type="button" className="btn btn-danger" onClick={() => setPendingDelete(agent)}>Delete</button>
+                        </li>
+                      ))}
+                  </ul>
+                ) : null}
+                {supervisor.managed_agent_ids.length === 0 ? (
+                  <p className="empty-managed">No managed agents</p>
+                ) : null}
+              </li>
+            ))}
+            {independentAgents.map((agent) => (
+              <li key={agent.id} className={`agent-tree-row ${editingId === agent.id ? "active" : ""}`}>
                 <button type="button" className="agent-item" onClick={() => startEdit(agent)}>
-                  <strong>{agent.name}</strong>
-                  <span className="agent-meta">
-                    {agent.model} · t={agent.temperature}
-                  </span>
+                  <span className="agent-name-line"><strong>{agent.name}</strong><span className="agent-type-badge">Agent</span></span>
+                  <span className="agent-meta">{agent.model} · t={agent.temperature}</span>
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={() => setPendingDelete(agent)}
-                >
-                  Delete
-                </button>
+                <button type="button" className="btn btn-danger" onClick={() => setPendingDelete(agent)}>Delete</button>
               </li>
             ))}
           </ul>
@@ -188,7 +249,7 @@ export function AgentsPage() {
                 <div className="panel-head">
                   <div>
                     <h1>{mode === "edit" ? "Edit agent" : "Create agent"}</h1>
-                    <p>Name, system prompt, model, temperature, and tools.</p>
+                    <p>Type, model, instructions, capabilities, and managed agents.</p>
                   </div>
                   <button
                     type="button"
@@ -210,6 +271,24 @@ export function AgentsPage() {
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     required
                   />
+                </label>
+                <label>
+                  Agent type
+                  <select
+                    value={form.agent_type}
+                    onChange={(event) => {
+                      const agentType = event.target.value as AgentInput["agent_type"];
+                      setForm({
+                        ...form,
+                        agent_type: agentType,
+                        managed_agent_ids: agentType === "normal" ? [] : form.managed_agent_ids,
+                      });
+                    }}
+                  >
+                    <option value="normal">Normal agent</option>
+                    <option value="supervisor" disabled={Boolean(editingAgent?.supervisor_id)}>Supervisor</option>
+                  </select>
+                  <span className="field-hint">Supervisors coordinate selected normal agents. Managed agents cannot become supervisors.</span>
                 </label>
                 <label>
                   Model
@@ -255,6 +334,28 @@ export function AgentsPage() {
                     onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
                   />
                 </label>
+                {form.agent_type === "supervisor" ? (
+                  <fieldset className="tool-picker">
+                    <legend>Managed agents</legend>
+                    <span className="field-hint">Each normal agent can belong to only one supervisor.</span>
+                    {managedAgentCandidates.map((agent) => (
+                      <label className="tool-option" key={agent.id}>
+                        <input
+                          type="checkbox"
+                          checked={form.managed_agent_ids.includes(agent.id)}
+                          onChange={(event) => setForm({
+                            ...form,
+                            managed_agent_ids: event.target.checked
+                              ? [...form.managed_agent_ids, agent.id]
+                              : form.managed_agent_ids.filter((id) => id !== agent.id),
+                          })}
+                        />
+                        <span><strong>{agent.name}</strong><small>{agent.model}</small></span>
+                      </label>
+                    ))}
+                    {managedAgentCandidates.length === 0 ? <span className="field-hint">No available normal agents.</span> : null}
+                  </fieldset>
+                ) : null}
                 <fieldset className="tool-picker">
                   <legend>Tools</legend>
                   <span className="field-hint">The agent can only call selected tools.</span>
@@ -351,6 +452,9 @@ export function AgentsPage() {
             <h2 id="delete-title">Delete agent</h2>
             <p>
               Remove <strong>{pendingDelete.name}</strong>? This cannot be undone.
+              {pendingDelete.agent_type === "supervisor"
+                ? " Its managed agents will remain as independent agents."
+                : ""}
             </p>
             <div className="modal-actions">
               <button

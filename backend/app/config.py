@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     rag_tool_call_limit: int = 8
     rag_model_call_limit: int = 9
     rag_recursion_limit: int = 25
+    supervisor_max_tokens: int = 5000
+    supervisor_tool_call_limit: int = 6
+    supervisor_model_call_limit: int = 8
+    supervisor_recursion_limit: int = 25
     llm_input_cost_per_million_usd: float = 1.0
     llm_output_cost_per_million_usd: float = 5.0
     short_term_memory_messages: int = 20
