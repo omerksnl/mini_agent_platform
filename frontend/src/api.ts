@@ -148,7 +148,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = typeof data.detail === "string" ? data.detail : "Request failed";
+    const detail = typeof data.detail === "string"
+      ? data.detail
+      : response.status === 504
+        ? "The agent took too long to respond. Please try again."
+        : `Request failed (${response.status})`;
     throw new Error(detail);
   }
   return data as T;

@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { api, type Agent, type Attachment, type Conversation, type Message } from "../api";
 import { useAuth } from "../AuthContext";
@@ -13,7 +15,7 @@ export function ChatPage() {
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("New conversation");
   const [agentId, setAgentId] = useState("");
-  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -23,6 +25,12 @@ export function ChatPage() {
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const messageThreadRef = useRef<HTMLDivElement | null>(null);
+  const draft = selected ? drafts[selected.id] ?? "" : "";
+
+  function setCurrentDraft(value: string) {
+    if (!selected) return;
+    setDrafts((current) => ({ ...current, [selected.id]: value }));
+  }
 
   function scrollThreadToBottom() {
     const thread = messageThreadRef.current;
@@ -77,6 +85,7 @@ export function ChatPage() {
 
   async function selectConversation(conversation: Conversation) {
     setSelected(conversation);
+    setPendingFile(null);
     setCreating(false);
     setLoadingMessages(true);
     setError("");
@@ -92,6 +101,7 @@ export function ChatPage() {
   function startCreate() {
     setSelected(null);
     setMessages([]);
+    setPendingFile(null);
     setCreating(true);
     setTitle("New conversation");
     setAgentId(agents[0]?.id ?? "");
@@ -116,7 +126,7 @@ export function ChatPage() {
     if (!selected || (!content && !pendingFile) || sending) return;
 
     const temporaryId = `temporary-${Date.now()}`;
-    setDraft("");
+    setCurrentDraft("");
     const fileToUpload = pendingFile;
     setProcessingPdf(Boolean(fileToUpload));
     setPendingFile(null);
@@ -156,7 +166,7 @@ export function ChatPage() {
       ]);
     } catch (err) {
       setMessages((current) => current.filter((message) => message.id !== temporaryId));
-      setDraft(content);
+      setCurrentDraft(content);
       setPendingFile(fileToUpload);
       setError(err instanceof Error ? err.message : "Message failed");
     } finally {
@@ -177,6 +187,11 @@ export function ChatPage() {
     try {
       await api.deleteConversation(pendingDelete.id);
       setConversations((current) => current.filter((item) => item.id !== pendingDelete.id));
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[pendingDelete.id];
+        return next;
+      });
       if (selected?.id === pendingDelete.id) {
         setSelected(null);
         setMessages([]);
@@ -298,7 +313,13 @@ export function ChatPage() {
                           {message.role === "user" ? "You" : agentName(selected.agent_id)}
                         </span>
                       </div>
-                      <p>{message.content}</p>
+                      {message.role === "assistant" ? (
+                        <div className="markdown-content">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p>{message.content}</p>
+                      )}
                       {message.attachments.length > 0 ? (
                         <div className="message-attachments">
                           {message.attachments.map((attachment) => (
@@ -361,7 +382,7 @@ export function ChatPage() {
                       rows={3}
                       placeholder="Write a message..."
                       value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
+                      onChange={(event) => setCurrentDraft(event.target.value)}
                       onKeyDown={handleComposerKeyDown}
                       disabled={sending}
                     />
