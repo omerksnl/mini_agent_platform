@@ -247,6 +247,7 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     used_tools: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     used_skills: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    used_agents: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

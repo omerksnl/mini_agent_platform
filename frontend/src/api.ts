@@ -100,6 +100,7 @@ export type Message = {
   content: string;
   used_tools: string[];
   used_skills: string[];
+  used_agents: string[];
   api_cost_usd: number;
   attachments: Attachment[];
   created_at: string;

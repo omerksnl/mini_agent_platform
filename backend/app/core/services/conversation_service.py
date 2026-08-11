@@ -182,11 +182,13 @@ class ConversationService:
             assistant_content = llm_result.content
             used_tools = llm_result.used_tools
             used_skills = llm_result.used_skills
+            used_agents = llm_result.used_agents
             api_cost_usd = llm_result.api_cost_usd
         else:
             assistant_content = llm_result
             used_tools = []
             used_skills = []
+            used_agents = []
             api_cost_usd = 0.0
         assistant_message = Message(
             tenant_id=tenant_id,
@@ -195,6 +197,7 @@ class ConversationService:
             content=assistant_content,
             used_tools=used_tools,
             used_skills=used_skills,
+            used_agents=used_agents,
             api_cost_usd=api_cost_usd,
         )
         self.db.add(assistant_message)

@@ -71,7 +71,12 @@ def test_conversation_passes_database_context_to_supervisor(client: TestClient) 
         def complete(self, agent, messages, http_tools=None, attachments=None, db=None):
             assert agent.agent_type == "supervisor"
             assert db is not None
-            return LLMResult(content="delegated response", used_tools=[])
+            return LLMResult(
+                content="delegated response",
+                used_tools=[],
+                used_agents=["child"],
+                api_cost_usd=0.012345,
+            )
 
     app.dependency_overrides[get_llm_client] = lambda: FakeSupervisorClient()
     try:
@@ -81,6 +86,8 @@ def test_conversation_passes_database_context_to_supervisor(client: TestClient) 
         )
         assert response.status_code == 200
         assert response.json()["content"] == "delegated response"
+        assert response.json()["used_agents"] == ["child"]
+        assert response.json()["api_cost_usd"] == 0.012345
     finally:
         app.dependency_overrides.pop(get_llm_client, None)
 
@@ -106,7 +113,11 @@ def test_supervisor_forwards_attachments_only_to_pdf_capable_child(
             def complete(self, agent, messages, http_tools=None, attachments=None, db=None):
                 if agent.agent_type == "normal":
                     self.forwarded = attachments
-                    return LLMResult(content="profile json", used_tools=["pdf_to_text"])
+                    return LLMResult(
+                        content="profile json",
+                        used_tools=["pdf_to_text"],
+                        api_cost_usd=0.0042,
+                    )
                 return super().complete(agent, messages, http_tools, attachments, db)
 
         llm = RecordingClient()
@@ -121,5 +132,8 @@ def test_supervisor_forwards_attachments_only_to_pdf_capable_child(
         result = llm.complete(supervisor, [{"role": "user", "content": "Process CV"}], attachments=[attachment], db=db)
         assert result.content == "profile json"
         assert llm.forwarded == [attachment]
+        assert result.used_agents == ["cv_ai"]
+        assert result.used_tools == []
+        assert result.api_cost_usd == 0.0042
     finally:
         db.close()

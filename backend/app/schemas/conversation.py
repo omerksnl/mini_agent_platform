@@ -54,5 +54,6 @@ class MessageResponse(BaseModel):
     created_at: datetime
     used_tools: list[str]
     used_skills: list[str]
+    used_agents: list[str]
     api_cost_usd: float
     attachments: list[AttachmentResponse]

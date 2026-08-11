@@ -131,6 +131,7 @@ export function ChatPage() {
         content,
         used_tools: [],
         used_skills: [],
+        used_agents: [],
         api_cost_usd: 0,
         attachments: fileToUpload ? [{
           id: `temporary-attachment-${Date.now()}`,
@@ -307,10 +308,11 @@ export function ChatPage() {
                           ))}
                         </div>
                       ) : null}
-                      {message.used_tools.length > 0 || message.used_skills.length > 0 ? (
+                      {message.used_tools.length > 0 || message.used_skills.length > 0 || message.used_agents.length > 0 ? (
                         <div className="message-metadata">
                           {message.used_tools.length > 0 ? <p>Used tools: {message.used_tools.join(", ")}</p> : null}
                           {message.used_skills.length > 0 ? <p>Used skills: {message.used_skills.join(", ")}</p> : null}
+                          {message.used_agents.length > 0 ? <p>Used agents: {message.used_agents.join(", ")}</p> : null}
                         </div>
                       ) : null}
                       {message.role === "assistant" && message.api_cost_usd > 0 ? (

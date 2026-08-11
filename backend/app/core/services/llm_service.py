@@ -35,6 +35,7 @@ class LLMResult:
     content: str
     used_tools: list[str]
     used_skills: list[str] = field(default_factory=list)
+    used_agents: list[str] = field(default_factory=list)
     api_cost_usd: float = 0.0
 
 
@@ -148,12 +149,15 @@ class OpenRouterLLMClient:
                 raise LLMError("PDF tool database context is unavailable")
             selected_system_tools.append(build_pdf_to_text_tool(db, attachments))
         selected_tools = [*selected_system_tools, *build_http_tools(http_tools or [])]
+        used_agents: list[str] = []
+        delegated_cost_usd = 0.0
         if agent.collections:
             if db is None:
                 raise LLMError("Collection tool database context is unavailable")
             selected_tools.append(build_collection_search_tool(db, agent))
         if is_supervisor:
             def delegate_to_child(child: Agent, task: str) -> str:
+                nonlocal delegated_cost_usd
                 child_attachments = attachments if attachments and "pdf_to_text" in child.system_tools else []
                 child_content = task.strip()
                 if child_attachments:
@@ -173,6 +177,9 @@ class OpenRouterLLMClient:
                     child_attachments,
                     db,
                 )
+                if child.name not in used_agents:
+                    used_agents.append(child.name)
+                delegated_cost_usd += child_result.api_cost_usd
                 return child_result.content
 
             selected_tools.extend(build_delegation_tools(agent, delegate_to_child))
@@ -281,9 +288,10 @@ class OpenRouterLLMClient:
             content = normalize_candidate_profile_json(content)
         return LLMResult(
             content=content,
-            used_tools=used_tools,
+            used_tools=[name for name in used_tools if not name.startswith("delegate_to_")],
             used_skills=[skill.name for skill in selected_skills],
-            api_cost_usd=round(cost_callback.total_cost_usd, 8),
+            used_agents=used_agents,
+            api_cost_usd=round(cost_callback.total_cost_usd + delegated_cost_usd, 8),
         )
 
     @staticmethod
