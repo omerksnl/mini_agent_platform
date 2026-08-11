@@ -14,6 +14,8 @@ export type Agent = {
   id: string;
   tenant_id: string;
   name: string;
+  agent_type: "normal" | "supervisor";
+  supervisor_id: string | null;
   system_prompt: string;
   model: string;
   temperature: number;
@@ -21,12 +23,14 @@ export type Agent = {
   tool_ids: string[];
   skill_ids: string[];
   collection_ids: string[];
+  managed_agent_ids: string[];
   created_at: string;
   updated_at: string;
 };
 
 export type AgentInput = {
   name: string;
+  agent_type: "normal" | "supervisor";
   system_prompt: string;
   model: string;
   temperature: number;
@@ -34,6 +38,7 @@ export type AgentInput = {
   tool_ids: string[];
   skill_ids: string[];
   collection_ids: string[];
+  managed_agent_ids: string[];
 };
 
 export type Skill = {
