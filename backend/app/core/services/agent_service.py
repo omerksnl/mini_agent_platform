@@ -77,7 +77,7 @@ class AgentService:
         collection_ids = data.pop("collection_ids", None)
         managed_agent_ids = data.pop("managed_agent_ids", None)
         target_type = data.get("agent_type", agent.agent_type)
-        if target_type == "supervisor" and agent.supervisor_id is not None:
+        if target_type == "supervisor" and agent.supervisors:
             raise AgentError("A managed agent cannot become a supervisor")
         if target_type == "normal":
             requested_managed = managed_agent_ids if managed_agent_ids is not None else agent.managed_agent_ids
@@ -101,9 +101,7 @@ class AgentService:
         if collection_ids is not None:
             agent.collections = self._get_collections(collection_ids, tenant_id)
         if managed_agent_ids is not None:
-            agent.managed_agents = self._get_managed_agents(
-                managed_agent_ids, tenant_id, supervisor_id=agent.id
-            )
+            agent.managed_agents = self._get_managed_agents(managed_agent_ids, tenant_id, supervisor_id=agent.id)
         for key, value in data.items():
             setattr(agent, key, value)
         self.db.commit()
@@ -157,12 +155,6 @@ class AgentService:
         ordered = [by_id[item_id] for item_id in unique_ids]
         if any(item.agent_type != "normal" for item in ordered):
             raise AgentError("Supervisors can manage only normal agents")
-        occupied = [
-            item.name for item in ordered
-            if item.supervisor_id is not None and item.supervisor_id != supervisor_id
-        ]
-        if occupied:
-            raise AgentError("Agents already managed by another supervisor: " + ", ".join(occupied), 409)
         return ordered
 
     @staticmethod

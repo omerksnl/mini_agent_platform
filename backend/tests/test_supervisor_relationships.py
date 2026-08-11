@@ -22,7 +22,7 @@ def create_agent(client: TestClient, token: str, name: str, **extra) -> dict:
     return response.json()
 
 
-def test_supervisor_manages_normal_agents_and_delete_releases_them(client: TestClient) -> None:
+def test_supervisor_manages_normal_agents_and_delete_removes_links(client: TestClient) -> None:
     token = register(client, "supervisor@example.com", "Supervisor Tenant")
     cv_agent = create_agent(client, token, "cv_ai")
     fit_agent = create_agent(client, token, "job_fit_ai")
@@ -35,16 +35,16 @@ def test_supervisor_manages_normal_agents_and_delete_releases_them(client: TestC
         managed_agent_ids=[cv_agent["id"], fit_agent["id"]],
     )
     assert supervisor["agent_type"] == "supervisor"
-    assert supervisor["supervisor_id"] is None
-    assert supervisor["managed_agent_ids"] == [cv_agent["id"], fit_agent["id"]]
+    assert supervisor["supervisor_ids"] == []
+    assert set(supervisor["managed_agent_ids"]) == {cv_agent["id"], fit_agent["id"]}
 
     refreshed_cv = client.get(f"/api/agents/{cv_agent['id']}", headers=headers(token)).json()
     assert refreshed_cv["agent_type"] == "normal"
-    assert refreshed_cv["supervisor_id"] == supervisor["id"]
+    assert refreshed_cv["supervisor_ids"] == [supervisor["id"]]
 
     assert client.delete(f"/api/agents/{supervisor['id']}", headers=headers(token)).status_code == 204
     released_cv = client.get(f"/api/agents/{cv_agent['id']}", headers=headers(token)).json()
-    assert released_cv["supervisor_id"] is None
+    assert released_cv["supervisor_ids"] == []
 
 
 def test_supervisor_relationship_validation(client: TestClient) -> None:
@@ -60,11 +60,13 @@ def test_supervisor_relationship_validation(client: TestClient) -> None:
     )
     assert normal_manager.status_code == 400
 
-    duplicate_owner = client.post(
+    shared_owner = client.post(
         "/api/agents", headers=headers(token),
         json={"name": "other", "agent_type": "supervisor", "managed_agent_ids": [child["id"]]},
     )
-    assert duplicate_owner.status_code == 409
+    assert shared_owner.status_code == 201
+    refreshed_child = client.get(f"/api/agents/{child['id']}", headers=headers(token)).json()
+    assert set(refreshed_child["supervisor_ids"]) == {supervisor["id"], shared_owner.json()["id"]}
 
     self_managed = client.patch(
         f"/api/agents/{supervisor['id']}", headers=headers(token),

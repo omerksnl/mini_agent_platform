@@ -15,7 +15,7 @@ export type Agent = {
   tenant_id: string;
   name: string;
   agent_type: "normal" | "supervisor";
-  supervisor_id: string | null;
+  supervisor_ids: string[];
   system_prompt: string;
   model: string;
   temperature: number;

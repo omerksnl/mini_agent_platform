@@ -29,6 +29,12 @@ agent_collections = Table(
     Column("collection_id", UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True),
 )
 
+supervisor_agents = Table(
+    "supervisor_agents", Base.metadata,
+    Column("supervisor_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("managed_agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class AgentSkill(Base):
     __tablename__ = "agent_skills"
@@ -87,9 +93,6 @@ class Agent(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
-    supervisor_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True
-    )
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     model: Mapped[str] = mapped_column(
         String(128), nullable=False, default="anthropic/claude-haiku-4.5"
@@ -118,11 +121,17 @@ class Agent(Base):
         secondary=agent_collections, back_populates="agents"
     )
 
-    supervisor: Mapped["Agent | None"] = relationship(
-        remote_side="Agent.id", back_populates="managed_agents", foreign_keys=[supervisor_id]
-    )
     managed_agents: Mapped[list["Agent"]] = relationship(
-        back_populates="supervisor", foreign_keys=[supervisor_id]
+        secondary=supervisor_agents,
+        primaryjoin=id == supervisor_agents.c.supervisor_id,
+        secondaryjoin=id == supervisor_agents.c.managed_agent_id,
+        back_populates="supervisors",
+    )
+    supervisors: Mapped[list["Agent"]] = relationship(
+        secondary=supervisor_agents,
+        primaryjoin=id == supervisor_agents.c.managed_agent_id,
+        secondaryjoin=id == supervisor_agents.c.supervisor_id,
+        back_populates="managed_agents",
     )
 
     @property
@@ -144,6 +153,10 @@ class Agent(Base):
     @property
     def managed_agent_ids(self) -> list[uuid.UUID]:
         return [item.id for item in self.managed_agents]
+
+    @property
+    def supervisor_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.supervisors]
 
 
 class HttpTool(Base):

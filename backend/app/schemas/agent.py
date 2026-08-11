@@ -51,7 +51,7 @@ class AgentResponse(BaseModel):
     tenant_id: UUID
     name: str
     agent_type: Literal["normal", "supervisor"]
-    supervisor_id: UUID | None
+    supervisor_ids: list[UUID]
     system_prompt: str
     model: str
     temperature: float
