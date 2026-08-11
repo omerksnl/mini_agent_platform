@@ -1,0 +1,112 @@
+from datetime import datetime
+from typing import Literal, Self
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+StepType = Literal["agent", "http_tool", "system_tool", "human_wait"]
+RouteCondition = Literal["success", "failure", "input_available", "always"]
+
+
+class WorkflowStepInput(BaseModel):
+    step_key: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1, max_length=255)
+    step_type: StepType
+    position: int = Field(ge=0)
+    agent_id: UUID | None = None
+    http_tool_id: UUID | None = None
+    system_tool_name: str | None = Field(default=None, min_length=1, max_length=100)
+    config: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> Self:
+        target_count = sum(
+            value is not None
+            for value in (self.agent_id, self.http_tool_id, self.system_tool_name)
+        )
+        expected = {
+            "agent": self.agent_id is not None and target_count == 1,
+            "http_tool": self.http_tool_id is not None and target_count == 1,
+            "system_tool": self.system_tool_name is not None and target_count == 1,
+            "human_wait": target_count == 0,
+        }[self.step_type]
+        if not expected:
+            raise ValueError(f"Invalid target fields for {self.step_type} step")
+        return self
+
+
+class WorkflowRouteInput(BaseModel):
+    source_step_key: str = Field(min_length=1, max_length=64)
+    target_step_key: str = Field(min_length=1, max_length=64)
+    condition: RouteCondition = "success"
+    priority: int = Field(default=0, ge=0)
+    config: dict = Field(default_factory=dict)
+
+
+class WorkflowCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = ""
+    is_active: bool = True
+    steps: list[WorkflowStepInput] = Field(min_length=1)
+    routes: list[WorkflowRouteInput] = Field(default_factory=list)
+
+
+class WorkflowUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    is_active: bool | None = None
+    steps: list[WorkflowStepInput] | None = Field(default=None, min_length=1)
+    routes: list[WorkflowRouteInput] | None = None
+
+    @model_validator(mode="after")
+    def validate_update(self) -> Self:
+        null_fields = [
+            name for name in self.model_fields_set if getattr(self, name) is None
+        ]
+        if null_fields:
+            raise ValueError("Fields cannot be null: " + ", ".join(sorted(null_fields)))
+        steps_set = "steps" in self.model_fields_set
+        routes_set = "routes" in self.model_fields_set
+        if steps_set != routes_set:
+            raise ValueError("Steps and routes must be updated together")
+        return self
+
+
+class WorkflowStepResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    step_key: str
+    name: str
+    step_type: StepType
+    position: int
+    agent_id: UUID | None
+    http_tool_id: UUID | None
+    system_tool_name: str | None
+    config: dict
+
+
+class WorkflowRouteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    source_step_key: str
+    target_step_key: str
+    condition: RouteCondition
+    priority: int
+    config: dict
+
+
+class WorkflowResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    name: str
+    description: str
+    is_active: bool
+    steps: list[WorkflowStepResponse]
+    routes: list[WorkflowRouteResponse]
+    created_at: datetime
+    updated_at: datetime

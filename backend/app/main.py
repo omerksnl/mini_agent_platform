@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api.routes import agents, attachments, auth, collections, conversations, skills, tools
+from app.api.routes import agents, attachments, auth, collections, conversations, skills, tools, workflows
 from app.config import get_settings
 from app.core.cache import redis_is_ready
 from app.db.session import get_db
@@ -27,6 +27,7 @@ app.include_router(tools.router, prefix="/api")
 app.include_router(skills.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
 app.include_router(collections.router, prefix="/api")
+app.include_router(workflows.router, prefix="/api")
 
 
 @app.get("/health")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, JSON, Column, DateTime, Float, ForeignKey, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Integer, JSON, Column, DateTime, Float, ForeignKey, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -60,6 +60,7 @@ class Tenant(Base):
     messages: Mapped[list["Message"]] = relationship(back_populates="tenant")
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="tenant")
     collections: Mapped[list["Collection"]] = relationship(back_populates="tenant")
+    workflows: Mapped[list["Workflow"]] = relationship(back_populates="tenant")
 
 
 class User(Base):
@@ -172,6 +173,111 @@ class HttpTool(Base):
         secondary=skill_tools,
         back_populates="http_tools",
     )
+
+
+class Workflow(Base):
+    __tablename__ = "workflows"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_workflows_tenant_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="workflows")
+    steps: Mapped[list["WorkflowStep"]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowStep.position",
+    )
+    routes: Mapped[list["WorkflowRoute"]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowRoute.priority",
+    )
+
+
+class WorkflowStep(Base):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "step_key", name="uq_workflow_steps_key"),
+        UniqueConstraint("workflow_id", "position", name="uq_workflow_steps_position"),
+        CheckConstraint(
+            "step_type IN ('agent', 'http_tool', 'system_tool', 'human_wait')",
+            name="ck_workflow_steps_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    step_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=True
+    )
+    http_tool_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("http_tools.id", ondelete="RESTRICT"), nullable=True
+    )
+    system_tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="steps")
+    agent: Mapped[Agent | None] = relationship(foreign_keys=[agent_id])
+    http_tool: Mapped[HttpTool | None] = relationship(foreign_keys=[http_tool_id])
+
+
+class WorkflowRoute(Base):
+    __tablename__ = "workflow_routes"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id", "source_step_id", "target_step_id", "condition",
+            name="uq_workflow_routes_edge_condition",
+        ),
+        CheckConstraint(
+            "condition IN ('success', 'failure', 'input_available', 'always')",
+            name="ck_workflow_routes_condition",
+        ),
+        CheckConstraint("source_step_id <> target_step_id", name="ck_workflow_routes_no_self"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_step_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="CASCADE"), nullable=False
+    )
+    target_step_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="CASCADE"), nullable=False
+    )
+    condition: Mapped[str] = mapped_column(String(30), nullable=False, default="success")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="routes")
+    source_step: Mapped[WorkflowStep] = relationship(foreign_keys=[source_step_id])
+    target_step: Mapped[WorkflowStep] = relationship(foreign_keys=[target_step_id])
+
+    @property
+    def source_step_key(self) -> str:
+        return self.source_step.step_key
+
+    @property
+    def target_step_key(self) -> str:
+        return self.target_step.step_key
 
 
 class Skill(Base):
