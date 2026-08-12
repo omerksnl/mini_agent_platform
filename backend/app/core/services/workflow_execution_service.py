@@ -9,7 +9,14 @@ from app.core.services.llm_service import LLMClient, LLMResult
 from app.core.services.workflow_service import WorkflowError, WorkflowService
 from app.core.tools import SYSTEM_TOOL_MAP
 from app.core.tools.http_tools import build_http_tool
-from app.models import Workflow, WorkflowRoute, WorkflowRun, WorkflowStep, WorkflowStepRun
+from app.models import (
+    Workflow,
+    WorkflowArtifact,
+    WorkflowRoute,
+    WorkflowRun,
+    WorkflowStep,
+    WorkflowStepRun,
+)
 
 
 MAX_WORKFLOW_STEPS = 50
@@ -32,6 +39,14 @@ class WorkflowExecutionService:
             input_data=input_data,
             output_data={"context": input_data, "steps": {}},
         )
+        run.artifacts.append(WorkflowArtifact(
+            tenant_id=tenant_id,
+            sequence=0,
+            artifact_key="workflow_input",
+            name="Workflow input",
+            artifact_type="workflow_input",
+            data=input_data,
+        ))
         self.db.add(run)
         self.db.commit()
         return self._execute(run, workflow, start_step)
@@ -47,6 +62,14 @@ class WorkflowExecutionService:
         waiting.status = "completed"
         waiting.output_data = {"human_input": input_data}
         waiting.completed_at = now
+        self._store_artifact(
+            run,
+            waiting,
+            waiting.step_key,
+            waiting.step_name,
+            "human_input",
+            waiting.output_data,
+        )
         state = dict(run.output_data)
         state["last_output"] = waiting.output_data
         state.setdefault("steps", {})[waiting.step_key] = waiting.output_data
@@ -64,6 +87,7 @@ class WorkflowExecutionService:
             .where(WorkflowRun.id == run_id, WorkflowRun.tenant_id == tenant_id)
             .options(
                 selectinload(WorkflowRun.step_runs),
+                selectinload(WorkflowRun.artifacts),
                 selectinload(WorkflowRun.current_step),
                 selectinload(WorkflowRun.workflow).selectinload(Workflow.steps),
                 selectinload(WorkflowRun.workflow).selectinload(Workflow.routes).selectinload(WorkflowRoute.source_step),
@@ -79,7 +103,7 @@ class WorkflowExecutionService:
         return list(self.db.scalars(
             select(WorkflowRun)
             .where(WorkflowRun.workflow_id == workflow_id, WorkflowRun.tenant_id == tenant_id)
-            .options(selectinload(WorkflowRun.step_runs))
+            .options(selectinload(WorkflowRun.step_runs), selectinload(WorkflowRun.artifacts))
             .order_by(WorkflowRun.created_at.desc())
         ).all())
 
@@ -109,12 +133,20 @@ class WorkflowExecutionService:
                 self.db.commit()
                 return self.get_run(run.id, run.tenant_id)
             try:
-                output, cost = self._execute_step(current, run.output_data)
+                output, cost = self._execute_step(current, self._state_with_artifacts(run))
                 step_run.status = "completed"
                 step_run.output_data = output
                 step_run.api_cost_usd = cost
                 step_run.completed_at = datetime.now(timezone.utc)
                 run.total_api_cost_usd += cost
+                self._store_artifact(
+                    run,
+                    step_run,
+                    current.step_key,
+                    current.name,
+                    "agent_output" if current.step_type == "agent" else "tool_output",
+                    output,
+                )
                 state = dict(run.output_data)
                 state["last_output"] = output
                 state.setdefault("steps", {})[current.step_key] = output
@@ -142,10 +174,22 @@ class WorkflowExecutionService:
             if self.llm_client is None:
                 raise WorkflowError("LLM client is unavailable")
             request = state.get("request") or state.get("prompt") or "Continue this workflow task."
-            context = json.dumps(state, ensure_ascii=False, default=str)
+            artifacts = [
+                {
+                    "key": artifact.artifact_key,
+                    "name": artifact.name,
+                    "type": artifact.artifact_type,
+                    "data": artifact.data,
+                }
+                for artifact in state.get("artifacts", [])
+            ]
+            context = json.dumps(artifacts, ensure_ascii=False, default=str)
             result = self.llm_client.complete(
                 step.agent,
-                [{"role": "user", "content": f"{request}\n\nWORKFLOW CONTEXT\n{context}"}],
+                [{"role": "user", "content": (
+                    f"{request}\n\nWORKFLOW ARTIFACTS\n{context}\n\n"
+                    "Use every relevant artifact. Do not discard earlier artifacts merely because a newer one exists."
+                )}],
                 step.agent.http_tools,
                 db=self.db if step.agent.collections or step.agent.agent_type == "supervisor" else None,
             )
@@ -168,6 +212,31 @@ class WorkflowExecutionService:
                 raise WorkflowError(f"Unsupported workflow system tool: {step.system_tool_name}")
             return {"result": tool.invoke(arguments)}, 0.0
         raise WorkflowError(f"Workflow step {step.step_key} has no executable target")
+
+    def _store_artifact(
+        self,
+        run: WorkflowRun,
+        step_run: WorkflowStepRun,
+        key: str,
+        name: str,
+        artifact_type: str,
+        data: dict,
+    ) -> None:
+        run.artifacts.append(WorkflowArtifact(
+            tenant_id=run.tenant_id,
+            step_run=step_run,
+            sequence=len(run.artifacts),
+            artifact_key=key,
+            name=name,
+            artifact_type=artifact_type,
+            data=data,
+        ))
+
+    @staticmethod
+    def _state_with_artifacts(run: WorkflowRun) -> dict:
+        state = {**run.input_data, **run.output_data}
+        state["artifacts"] = list(run.artifacts)
+        return state
 
     @staticmethod
     def _start_step(workflow: Workflow) -> WorkflowStep:

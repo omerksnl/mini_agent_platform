@@ -481,6 +481,15 @@ label {
 .workflow-result { display: grid; gap: 8px; padding: 16px; border: 1px solid #84bd9e; border-radius: 4px; background: #f2fbf6; }
 .workflow-result pre { max-height: 260px; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .workflow-run-cost { text-align: right; font-size: 0.72rem; color: var(--muted); }
+.workflow-artifacts { display: grid; gap: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: #f5f5f5; }
+.workflow-artifacts-head { display: flex; align-items: center; justify-content: space-between; color: var(--text-dark); }
+.workflow-artifacts-head span { min-width: 22px; padding: 3px 7px; border-radius: 999px; color: var(--white); background: var(--primary); font-size: 0.62rem; text-align: center; }
+.workflow-artifact { overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--box); }
+.workflow-artifact summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; cursor: pointer; }
+.workflow-artifact summary > span:first-child { display: grid; gap: 2px; }
+.workflow-artifact summary strong { color: var(--primary); font-size: 0.72rem; }
+.workflow-artifact summary small, .workflow-artifact summary > span:last-child { color: var(--muted); font-size: 0.61rem; }
+.workflow-artifact pre { max-height: 260px; overflow: auto; margin: 0; padding: 11px; border-top: 1px solid var(--line); background: var(--input-bg); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.65rem; }
 
 .workflow-graph-editor { display: grid; justify-items: center; padding: 18px; border: 1px solid var(--line); border-radius: 5px; background: #f4f4f4; }
 .workflow-graph-segment { width: min(100%, 410px); display: grid; justify-items: center; }

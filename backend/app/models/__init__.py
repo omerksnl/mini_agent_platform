@@ -332,6 +332,9 @@ class WorkflowRun(Base):
     step_runs: Mapped[list["WorkflowStepRun"]] = relationship(
         back_populates="workflow_run", cascade="all, delete-orphan", order_by="WorkflowStepRun.sequence"
     )
+    artifacts: Mapped[list["WorkflowArtifact"]] = relationship(
+        back_populates="workflow_run", cascade="all, delete-orphan", order_by="WorkflowArtifact.sequence"
+    )
 
 
 class WorkflowStepRun(Base):
@@ -365,6 +368,38 @@ class WorkflowStepRun(Base):
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="step_runs")
     workflow_step: Mapped[WorkflowStep | None] = relationship(foreign_keys=[workflow_step_id])
+
+
+class WorkflowArtifact(Base):
+    __tablename__ = "workflow_artifacts"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "artifact_key", name="uq_workflow_artifacts_run_key"),
+        UniqueConstraint("workflow_run_id", "sequence", name="uq_workflow_artifacts_run_sequence"),
+        CheckConstraint(
+            "artifact_type IN ('workflow_input', 'agent_output', 'human_input', 'tool_output')",
+            name="ck_workflow_artifacts_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_step_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="artifacts")
+    step_run: Mapped[WorkflowStepRun | None] = relationship(foreign_keys=[step_run_id])
 
 
 class Skill(Base):

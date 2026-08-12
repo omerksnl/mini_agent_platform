@@ -6,7 +6,10 @@ from app.main import app
 
 
 class FakeWorkflowLLM:
+    messages: list[list[dict]] = []
+
     def complete(self, agent, messages, http_tools=None, attachments=None, db=None):
+        self.messages.append(messages)
         return LLMResult(
             content=f"processed by {agent.name}",
             used_tools=[],
@@ -55,6 +58,7 @@ def create_execution_workflow(client: TestClient, token: str, agent_id: str) -> 
 
 
 def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
+    FakeWorkflowLLM.messages.clear()
     app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
     token = register(client, "runner@example.com", "Runner Tenant")
     agent = create_agent(client, token, "cv_ai")
@@ -71,6 +75,9 @@ def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
     assert [item["status"] for item in run["step_runs"]] == ["completed", "waiting"]
     assert run["step_runs"][0]["output_data"]["content"] == "processed by cv_ai"
     assert run["total_api_cost_usd"] == 0.0125
+    assert [item["artifact_key"] for item in run["artifacts"]] == ["workflow_input", "extract"]
+    assert run["artifacts"][0]["data"] == {"request": "Process this candidate"}
+    assert run["artifacts"][1]["artifact_type"] == "agent_output"
 
     resumed = client.post(
         f"/api/workflows/runs/{run['id']}/resume",
@@ -83,6 +90,40 @@ def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
     assert completed["current_step_id"] is None
     assert completed["step_runs"][-1]["output_data"] == {"result": "42"}
     assert completed["output_data"]["steps"]["approval"] == {"human_input": {"approved": True}}
+    assert [item["artifact_key"] for item in completed["artifacts"]] == [
+        "workflow_input", "extract", "approval", "calculate"
+    ]
+    assert completed["artifacts"][2]["artifact_type"] == "human_input"
+    assert completed["artifacts"][3]["artifact_type"] == "tool_output"
+
+
+def test_agent_receives_all_prior_workflow_artifacts(client: TestClient) -> None:
+    FakeWorkflowLLM.messages.clear()
+    app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
+    token = register(client, "artifact-context@example.com", "Artifact Context")
+    first = create_agent(client, token, "cv_ai")
+    second = create_agent(client, token, "job_fitter_ai")
+    workflow = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Artifact handoff",
+        "steps": [
+            {"step_key": "candidate_profile", "name": "Candidate profile", "step_type": "agent", "position": 0, "agent_id": first["id"]},
+            {"step_key": "job_fit", "name": "Job fit", "step_type": "agent", "position": 1, "agent_id": second["id"]},
+        ],
+        "routes": [{"source_step_key": "candidate_profile", "target_step_key": "job_fit", "condition": "success"}],
+    }).json()
+
+    response = client.post(
+        f"/api/workflows/{workflow['id']}/runs",
+        headers=headers(token),
+        json={"input_data": {"request": "Evaluate candidate"}},
+    )
+
+    assert response.status_code == 201, response.text
+    assert len(FakeWorkflowLLM.messages) == 2
+    second_prompt = FakeWorkflowLLM.messages[1][0]["content"]
+    assert '"key": "workflow_input"' in second_prompt
+    assert '"key": "candidate_profile"' in second_prompt
+    assert "processed by cv_ai" in second_prompt
 
 
 def test_failed_step_is_persisted(client: TestClient) -> None:

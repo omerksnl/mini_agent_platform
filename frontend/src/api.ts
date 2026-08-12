@@ -159,10 +159,16 @@ export type WorkflowStepRun = {
   status: WorkflowRunStatus; input_data: Record<string, unknown>; output_data: Record<string, unknown>;
   error: string | null; api_cost_usd: number; started_at: string; completed_at: string | null;
 };
+export type WorkflowArtifact = {
+  id: string; step_run_id: string | null; sequence: number; artifact_key: string; name: string;
+  artifact_type: "workflow_input" | "agent_output" | "human_input" | "tool_output";
+  data: Record<string, unknown>; created_at: string;
+};
 export type WorkflowRun = {
   id: string; tenant_id: string; workflow_id: string; status: WorkflowRunStatus; current_step_id: string | null;
   input_data: Record<string, unknown>; output_data: Record<string, unknown>; error: string | null;
-  total_api_cost_usd: number; step_runs: WorkflowStepRun[]; created_at: string; updated_at: string; completed_at: string | null;
+  total_api_cost_usd: number; step_runs: WorkflowStepRun[]; artifacts: WorkflowArtifact[];
+  created_at: string; updated_at: string; completed_at: string | null;
 };
 
 const TOKEN_KEY = "access_token";

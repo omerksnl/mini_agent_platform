@@ -140,6 +140,19 @@ class WorkflowStepRunResponse(BaseModel):
     completed_at: datetime | None
 
 
+class WorkflowArtifactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    step_run_id: UUID | None
+    sequence: int
+    artifact_key: str
+    name: str
+    artifact_type: Literal["workflow_input", "agent_output", "human_input", "tool_output"]
+    data: dict
+    created_at: datetime
+
+
 class WorkflowRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -153,6 +166,7 @@ class WorkflowRunResponse(BaseModel):
     error: str | None
     total_api_cost_usd: float
     step_runs: list[WorkflowStepRunResponse]
+    artifacts: list[WorkflowArtifactResponse]
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
