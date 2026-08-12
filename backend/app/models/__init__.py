@@ -335,6 +335,7 @@ class WorkflowRun(Base):
     artifacts: Mapped[list["WorkflowArtifact"]] = relationship(
         back_populates="workflow_run", cascade="all, delete-orphan", order_by="WorkflowArtifact.sequence"
     )
+    attachments: Mapped[list["Attachment"]] = relationship(back_populates="workflow_run")
 
 
 class WorkflowStepRun(Base):
@@ -499,6 +500,9 @@ class Attachment(Base):
     message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -508,6 +512,7 @@ class Attachment(Base):
 
     tenant: Mapped[Tenant] = relationship(back_populates="attachments")
     message: Mapped[Message | None] = relationship(back_populates="attachments")
+    workflow_run: Mapped[WorkflowRun | None] = relationship(back_populates="attachments")
 
 
 class Collection(Base):

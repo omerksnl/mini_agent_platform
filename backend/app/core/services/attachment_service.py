@@ -87,6 +87,29 @@ class AttachmentService:
             attachment.message_id = message_id
         return attachments
 
+    def claim_for_workflow(
+        self,
+        attachment_ids: list[UUID],
+        tenant_id: UUID,
+        user_id: UUID,
+        workflow_run_id: UUID,
+    ) -> list[Attachment]:
+        if not attachment_ids:
+            return []
+        unique_ids = list(dict.fromkeys(attachment_ids))
+        attachments = list(self.db.scalars(select(Attachment).where(
+            Attachment.id.in_(unique_ids),
+            Attachment.tenant_id == tenant_id,
+            Attachment.uploaded_by_id == user_id,
+            Attachment.message_id.is_(None),
+            Attachment.workflow_run_id.is_(None),
+        )).all())
+        if len(attachments) != len(unique_ids):
+            raise AttachmentError("One or more attachments are unavailable", status_code=404)
+        for attachment in attachments:
+            attachment.workflow_run_id = workflow_run_id
+        return attachments
+
     def path_for(self, attachment: Attachment) -> Path:
         root = Path(self.settings.upload_directory).resolve()
         path = (root / attachment.storage_key).resolve()

@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser, get_current_user, get_llm_client
@@ -18,6 +20,17 @@ from app.schemas.workflow import (
 )
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+workflow_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="workflow")
+
+
+def execute_workflow_in_background(
+    run_id: UUID, tenant_id: UUID, llm_client: LLMClient, bind: Engine
+) -> None:
+    db = Session(bind=bind)
+    try:
+        WorkflowExecutionService(db, llm_client).execute_deferred(run_id, tenant_id)
+    finally:
+        db.close()
 
 
 def raise_workflow_error(exc: WorkflowError) -> None:
@@ -70,8 +83,19 @@ def start_workflow_run(
     llm_client: LLMClient = Depends(get_llm_client),
 ) -> WorkflowRunResponse:
     try:
-        run = WorkflowExecutionService(db, llm_client).start(
-            workflow_id, current.tenant_id, payload.input_data
+        run = WorkflowExecutionService(db, llm_client).start_deferred(
+            workflow_id,
+            current.tenant_id,
+            current.id,
+            payload.input_data,
+            payload.attachment_ids,
+        )
+        workflow_executor.submit(
+            execute_workflow_in_background,
+            run.id,
+            current.tenant_id,
+            llm_client,
+            db.get_bind(),
         )
     except WorkflowError as exc:
         raise_workflow_error(exc)
@@ -102,9 +126,17 @@ def resume_workflow_run(
     llm_client: LLMClient = Depends(get_llm_client),
 ) -> WorkflowRunResponse:
     try:
-        run = WorkflowExecutionService(db, llm_client).resume(
+        run = WorkflowExecutionService(db, llm_client).resume_deferred(
             run_id, current.tenant_id, payload.input_data
         )
+        if run.status == "running":
+            workflow_executor.submit(
+                execute_workflow_in_background,
+                run.id,
+                current.tenant_id,
+                llm_client,
+                db.get_bind(),
+            )
     except WorkflowError as exc:
         raise_workflow_error(exc)
     return WorkflowRunResponse.model_validate(run)

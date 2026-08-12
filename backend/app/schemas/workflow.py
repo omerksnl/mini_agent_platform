@@ -33,6 +33,13 @@ class WorkflowStepInput(BaseModel):
         }[self.step_type]
         if not expected:
             raise ValueError(f"Invalid target fields for {self.step_type} step")
+        if self.step_type == "agent":
+            task_instructions = self.config.get("task_instructions", "")
+            use_collections = self.config.get("use_collections", True)
+            if not isinstance(task_instructions, str) or len(task_instructions) > 4000:
+                raise ValueError("Agent task_instructions must be text up to 4000 characters")
+            if not isinstance(use_collections, bool):
+                raise ValueError("Agent use_collections must be true or false")
         return self
 
 
@@ -117,6 +124,7 @@ RunStatus = Literal["running", "waiting", "completed", "failed"]
 
 class WorkflowRunStart(BaseModel):
     input_data: dict = Field(default_factory=dict)
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
 
 
 class WorkflowRunResume(BaseModel):

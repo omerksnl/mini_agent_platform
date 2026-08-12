@@ -306,8 +306,8 @@ export const api = {
   },
   deleteWorkflow(id: string) { return request<void>(`/api/workflows/${id}`, { method: "DELETE" }); },
   listWorkflowRuns(id: string) { return request<WorkflowRun[]>(`/api/workflows/${id}/runs`); },
-  startWorkflowRun(id: string, inputData: Record<string, unknown>) {
-    return request<WorkflowRun>(`/api/workflows/${id}/runs`, { method: "POST", body: JSON.stringify({ input_data: inputData }) });
+  startWorkflowRun(id: string, inputData: Record<string, unknown>, attachmentIds: string[] = []) {
+    return request<WorkflowRun>(`/api/workflows/${id}/runs`, { method: "POST", body: JSON.stringify({ input_data: inputData, attachment_ids: attachmentIds }) });
   },
   getWorkflowRun(id: string) { return request<WorkflowRun>(`/api/workflows/runs/${id}`); },
   resumeWorkflowRun(id: string, inputData: Record<string, unknown>) {

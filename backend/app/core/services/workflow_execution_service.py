@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.services.llm_service import LLMClient, LLMResult
+from app.core.services.attachment_service import AttachmentError, AttachmentService
 from app.core.services.workflow_service import WorkflowError, WorkflowService
 from app.core.tools import SYSTEM_TOOL_MAP
 from app.core.tools.http_tools import build_http_tool
@@ -27,7 +28,14 @@ class WorkflowExecutionService:
         self.db = db
         self.llm_client = llm_client
 
-    def start(self, workflow_id: UUID, tenant_id: UUID, input_data: dict) -> WorkflowRun:
+    def start(
+        self,
+        workflow_id: UUID,
+        tenant_id: UUID,
+        user_id: UUID,
+        input_data: dict,
+        attachment_ids: list[UUID] | None = None,
+    ) -> WorkflowRun:
         workflow = WorkflowService(self.db).get_workflow(workflow_id, tenant_id)
         if not workflow.is_active:
             raise WorkflowError("Workflow is inactive", 409)
@@ -39,17 +47,84 @@ class WorkflowExecutionService:
             input_data=input_data,
             output_data={"context": input_data, "steps": {}},
         )
+        self.db.add(run)
+        self.db.flush()
+        try:
+            attachments = AttachmentService(self.db).claim_for_workflow(
+                attachment_ids or [], tenant_id, user_id, run.id
+            )
+        except AttachmentError as exc:
+            self.db.rollback()
+            raise WorkflowError(exc.message, exc.status_code) from exc
+        artifact_input = dict(input_data)
+        if attachments:
+            artifact_input["attachments"] = [
+                {"id": str(item.id), "filename": item.original_name, "content_type": item.content_type}
+                for item in attachments
+            ]
         run.artifacts.append(WorkflowArtifact(
             tenant_id=tenant_id,
             sequence=0,
             artifact_key="workflow_input",
             name="Workflow input",
             artifact_type="workflow_input",
-            data=input_data,
+            data=artifact_input,
         ))
-        self.db.add(run)
         self.db.commit()
         return self._execute(run, workflow, start_step)
+
+    def start_deferred(
+        self,
+        workflow_id: UUID,
+        tenant_id: UUID,
+        user_id: UUID,
+        input_data: dict,
+        attachment_ids: list[UUID] | None = None,
+    ) -> WorkflowRun:
+        """Create a visible run without blocking the HTTP response on LLM work."""
+        workflow = WorkflowService(self.db).get_workflow(workflow_id, tenant_id)
+        if not workflow.is_active:
+            raise WorkflowError("Workflow is inactive", 409)
+        start_step = self._start_step(workflow)
+        run = WorkflowRun(
+            tenant_id=tenant_id,
+            workflow_id=workflow.id,
+            status="running",
+            current_step_id=start_step.id,
+            input_data=input_data,
+            output_data={"context": input_data, "steps": {}},
+        )
+        self.db.add(run)
+        self.db.flush()
+        try:
+            attachments = AttachmentService(self.db).claim_for_workflow(
+                attachment_ids or [], tenant_id, user_id, run.id
+            )
+        except AttachmentError as exc:
+            self.db.rollback()
+            raise WorkflowError(exc.message, exc.status_code) from exc
+        artifact_input = dict(input_data)
+        if attachments:
+            artifact_input["attachments"] = [
+                {"id": str(item.id), "filename": item.original_name, "content_type": item.content_type}
+                for item in attachments
+            ]
+        run.artifacts.append(WorkflowArtifact(
+            tenant_id=tenant_id,
+            sequence=0,
+            artifact_key="workflow_input",
+            name="Workflow input",
+            artifact_type="workflow_input",
+            data=artifact_input,
+        ))
+        self.db.commit()
+        return self.get_run(run.id, tenant_id)
+
+    def execute_deferred(self, run_id: UUID, tenant_id: UUID) -> WorkflowRun:
+        run = self.get_run(run_id, tenant_id)
+        if run.status != "running" or run.current_step is None:
+            return run
+        return self._execute(run, run.workflow, run.current_step)
 
     def resume(self, run_id: UUID, tenant_id: UUID, input_data: dict) -> WorkflowRun:
         run = self.get_run(run_id, tenant_id)
@@ -81,6 +156,29 @@ class WorkflowExecutionService:
             return self._complete(run)
         return self._execute(run, run.workflow, next_step)
 
+    def resume_deferred(self, run_id: UUID, tenant_id: UUID, input_data: dict) -> WorkflowRun:
+        run = self.get_run(run_id, tenant_id)
+        if run.status != "waiting" or run.current_step is None:
+            raise WorkflowError("Workflow run is not waiting for input", 409)
+        waiting = next((item for item in reversed(run.step_runs) if item.status == "waiting"), None)
+        if waiting is None or waiting.workflow_step_id != run.current_step_id:
+            raise WorkflowError("Waiting workflow step was not found", 409)
+        waiting.status = "completed"
+        waiting.output_data = {"human_input": input_data}
+        waiting.completed_at = datetime.now(timezone.utc)
+        self._store_artifact(run, waiting, waiting.step_key, waiting.step_name, "human_input", waiting.output_data)
+        state = dict(run.output_data)
+        state["last_output"] = waiting.output_data
+        state.setdefault("steps", {})[waiting.step_key] = waiting.output_data
+        run.output_data = state
+        next_step = self._next_step(run.workflow, run.current_step, "input_available")
+        if next_step is None:
+            return self._complete(run)
+        run.status = "running"
+        run.current_step_id = next_step.id
+        self.db.commit()
+        return self.get_run(run.id, tenant_id)
+
     def get_run(self, run_id: UUID, tenant_id: UUID) -> WorkflowRun:
         run = self.db.scalar(
             select(WorkflowRun)
@@ -88,11 +186,13 @@ class WorkflowExecutionService:
             .options(
                 selectinload(WorkflowRun.step_runs),
                 selectinload(WorkflowRun.artifacts),
+                selectinload(WorkflowRun.attachments),
                 selectinload(WorkflowRun.current_step),
                 selectinload(WorkflowRun.workflow).selectinload(Workflow.steps),
                 selectinload(WorkflowRun.workflow).selectinload(Workflow.routes).selectinload(WorkflowRoute.source_step),
                 selectinload(WorkflowRun.workflow).selectinload(Workflow.routes).selectinload(WorkflowRoute.target_step),
             )
+            .execution_options(populate_existing=True)
         )
         if run is None:
             raise WorkflowError("Workflow run not found", 404)
@@ -103,7 +203,11 @@ class WorkflowExecutionService:
         return list(self.db.scalars(
             select(WorkflowRun)
             .where(WorkflowRun.workflow_id == workflow_id, WorkflowRun.tenant_id == tenant_id)
-            .options(selectinload(WorkflowRun.step_runs), selectinload(WorkflowRun.artifacts))
+            .options(
+                selectinload(WorkflowRun.step_runs),
+                selectinload(WorkflowRun.artifacts),
+                selectinload(WorkflowRun.attachments),
+            )
             .order_by(WorkflowRun.created_at.desc())
         ).all())
 
@@ -133,7 +237,9 @@ class WorkflowExecutionService:
                 self.db.commit()
                 return self.get_run(run.id, run.tenant_id)
             try:
-                output, cost = self._execute_step(current, self._state_with_artifacts(run))
+                output, cost = self._execute_step(
+                    current, self._state_with_artifacts(run), run.attachments
+                )
                 step_run.status = "completed"
                 step_run.output_data = output
                 step_run.api_cost_usd = cost
@@ -169,11 +275,10 @@ class WorkflowExecutionService:
             executed += 1
         return self._complete(run)
 
-    def _execute_step(self, step: WorkflowStep, state: dict) -> tuple[dict, float]:
+    def _execute_step(self, step: WorkflowStep, state: dict, attachments: list) -> tuple[dict, float]:
         if step.step_type == "agent" and step.agent is not None:
             if self.llm_client is None:
                 raise WorkflowError("LLM client is unavailable")
-            request = state.get("request") or state.get("prompt") or "Continue this workflow task."
             artifacts = [
                 {
                     "key": artifact.artifact_key,
@@ -184,14 +289,39 @@ class WorkflowExecutionService:
                 for artifact in state.get("artifacts", [])
             ]
             context = json.dumps(artifacts, ensure_ascii=False, default=str)
+            has_agent_output = any(
+                artifact.get("type") == "agent_output" for artifact in artifacts
+            )
+            task_instructions = str(step.config.get("task_instructions", "")).strip()
+            use_collections = step.config.get("use_collections", True)
+            if not isinstance(use_collections, bool):
+                use_collections = True
+            request = (
+                state.get("request") or state.get("prompt") or f"Execute the {step.name} step."
+                if not has_agent_output
+                else (
+                    f"Execute only your assigned specialist task for workflow step '{step.name}'. "
+                    "Use the relevant workflow artifacts below as your inputs. "
+                    "Do not repeat an earlier agent's task."
+                )
+            )
+            step_attachments = (
+                attachments
+                if "pdf_to_text" in step.agent.system_tools and not has_agent_output
+                else None
+            )
             result = self.llm_client.complete(
                 step.agent,
                 [{"role": "user", "content": (
                     f"{request}\n\nWORKFLOW ARTIFACTS\n{context}\n\n"
                     "Use every relevant artifact. Do not discard earlier artifacts merely because a newer one exists."
+                    + (f"\n\nNODE TASK INSTRUCTIONS\n{task_instructions}" if task_instructions else "")
                 )}],
                 step.agent.http_tools,
-                db=self.db if step.agent.collections or step.agent.agent_type == "supervisor" else None,
+                attachments=step_attachments,
+                db=self.db if attachments or step.agent.collections or step.agent.agent_type == "supervisor" else None,
+                skip_response_validation=True,
+                use_collections=use_collections,
             )
             if isinstance(result, LLMResult):
                 return {

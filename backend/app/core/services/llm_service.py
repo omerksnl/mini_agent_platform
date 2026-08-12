@@ -88,6 +88,8 @@ class LLMClient(Protocol):
         http_tools: list[HttpTool] | None = None,
         attachments: list[Attachment] | None = None,
         db: Session | None = None,
+        skip_response_validation: bool = False,
+        use_collections: bool = True,
     ) -> LLMResult | str: ...
 
 
@@ -112,6 +114,8 @@ class OpenRouterLLMClient:
         http_tools: list[HttpTool] | None = None,
         attachments: list[Attachment] | None = None,
         db: Session | None = None,
+        skip_response_validation: bool = False,
+        use_collections: bool = True,
     ) -> LLMResult:
         is_supervisor = agent.agent_type == "supervisor"
         if is_supervisor and not agent.managed_agents:
@@ -151,7 +155,7 @@ class OpenRouterLLMClient:
         selected_tools = [*selected_system_tools, *build_http_tools(http_tools or [])]
         used_agents: list[str] = []
         delegated_cost_usd = 0.0
-        if agent.collections:
+        if agent.collections and use_collections:
             if db is None:
                 raise LLMError("Collection tool database context is unavailable")
             selected_tools.append(build_collection_search_tool(db, agent))
@@ -248,7 +252,7 @@ class OpenRouterLLMClient:
             content,
             result_messages,
             cost_callback,
-        ) if not attachments and (len(routing.request_parts) > 1 or required_tool_names) else ValidationDecision(complete=True)
+        ) if not skip_response_validation and not attachments and (len(routing.request_parts) > 1 or required_tool_names) else ValidationDecision(complete=True)
         profile_invalid = self._candidate_profile_invalid(selected_skills, content)
 
         if missing_tools or not validation.complete or profile_invalid:
@@ -271,7 +275,7 @@ class OpenRouterLLMClient:
                 content,
                 result_messages,
                 cost_callback,
-            ) if not attachments else ValidationDecision(complete=True)
+            ) if not skip_response_validation and not attachments else ValidationDecision(complete=True)
             profile_invalid = self._candidate_profile_invalid(selected_skills, content)
             if missing_tools:
                 raise LLMError("The agent did not call required tools: " + ", ".join(missing_tools))

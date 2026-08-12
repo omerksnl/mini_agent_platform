@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_llm_client
@@ -7,9 +9,19 @@ from app.main import app
 
 class FakeWorkflowLLM:
     messages: list[list[dict]] = []
+    attachment_counts: list[int] = []
 
-    def complete(self, agent, messages, http_tools=None, attachments=None, db=None):
+    validation_flags: list[bool] = []
+    collection_flags: list[bool] = []
+
+    def complete(
+        self, agent, messages, http_tools=None, attachments=None, db=None,
+        skip_response_validation=False, use_collections=True,
+    ):
         self.messages.append(messages)
+        self.attachment_counts.append(len(attachments or []))
+        self.validation_flags.append(skip_response_validation)
+        self.collection_flags.append(use_collections)
         return LLMResult(
             content=f"processed by {agent.name}",
             used_tools=[],
@@ -32,6 +44,15 @@ def register(client: TestClient, email: str, tenant: str) -> str:
 
 def headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def wait_for_run(client: TestClient, token: str, run_id: str, statuses: set[str]) -> dict:
+    for _ in range(200):
+        run = client.get(f"/api/workflows/runs/{run_id}", headers=headers(token)).json()
+        if run["status"] in statuses:
+            return run
+        time.sleep(0.01)
+    raise AssertionError(f"Workflow run did not reach {statuses}")
 
 
 def create_agent(client: TestClient, token: str, name: str) -> dict:
@@ -59,6 +80,9 @@ def create_execution_workflow(client: TestClient, token: str, agent_id: str) -> 
 
 def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
     FakeWorkflowLLM.messages.clear()
+    FakeWorkflowLLM.attachment_counts.clear()
+    FakeWorkflowLLM.validation_flags.clear()
+    FakeWorkflowLLM.collection_flags.clear()
     app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
     token = register(client, "runner@example.com", "Runner Tenant")
     agent = create_agent(client, token, "cv_ai")
@@ -71,6 +95,8 @@ def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
     )
     assert started.status_code == 201, started.text
     run = started.json()
+    assert run["status"] == "running"
+    run = wait_for_run(client, token, run["id"], {"waiting"})
     assert run["status"] == "waiting"
     assert [item["status"] for item in run["step_runs"]] == ["completed", "waiting"]
     assert run["step_runs"][0]["output_data"]["content"] == "processed by cv_ai"
@@ -86,6 +112,8 @@ def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
     )
     assert resumed.status_code == 200, resumed.text
     completed = resumed.json()
+    assert completed["status"] == "running"
+    completed = wait_for_run(client, token, run["id"], {"completed"})
     assert completed["status"] == "completed"
     assert completed["current_step_id"] is None
     assert completed["step_runs"][-1]["output_data"] == {"result": "42"}
@@ -99,6 +127,9 @@ def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:
 
 def test_agent_receives_all_prior_workflow_artifacts(client: TestClient) -> None:
     FakeWorkflowLLM.messages.clear()
+    FakeWorkflowLLM.attachment_counts.clear()
+    FakeWorkflowLLM.validation_flags.clear()
+    FakeWorkflowLLM.collection_flags.clear()
     app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
     token = register(client, "artifact-context@example.com", "Artifact Context")
     first = create_agent(client, token, "cv_ai")
@@ -107,7 +138,7 @@ def test_agent_receives_all_prior_workflow_artifacts(client: TestClient) -> None
         "name": "Artifact handoff",
         "steps": [
             {"step_key": "candidate_profile", "name": "Candidate profile", "step_type": "agent", "position": 0, "agent_id": first["id"]},
-            {"step_key": "job_fit", "name": "Job fit", "step_type": "agent", "position": 1, "agent_id": second["id"]},
+            {"step_key": "job_fit", "name": "Job fit", "step_type": "agent", "position": 1, "agent_id": second["id"], "config": {"task_instructions": "Use prior candidate evidence only.", "use_collections": False}},
         ],
         "routes": [{"source_step_key": "candidate_profile", "target_step_key": "job_fit", "condition": "success"}],
     }).json()
@@ -119,11 +150,60 @@ def test_agent_receives_all_prior_workflow_artifacts(client: TestClient) -> None
     )
 
     assert response.status_code == 201, response.text
+    wait_for_run(client, token, response.json()["id"], {"completed", "failed", "waiting"})
     assert len(FakeWorkflowLLM.messages) == 2
     second_prompt = FakeWorkflowLLM.messages[1][0]["content"]
     assert '"key": "workflow_input"' in second_prompt
     assert '"key": "candidate_profile"' in second_prompt
     assert "processed by cv_ai" in second_prompt
+    assert "Execute only your assigned specialist task" in second_prompt
+    assert "NODE TASK INSTRUCTIONS" in second_prompt
+    assert "Use prior candidate evidence only." in second_prompt
+    assert not second_prompt.startswith("Evaluate candidate\n")
+    assert FakeWorkflowLLM.validation_flags == [True, True]
+    assert FakeWorkflowLLM.collection_flags == [True, False]
+
+
+def test_workflow_pdf_is_attached_to_run_and_only_first_pdf_agent(client: TestClient) -> None:
+    FakeWorkflowLLM.messages.clear()
+    FakeWorkflowLLM.attachment_counts.clear()
+    FakeWorkflowLLM.validation_flags.clear()
+    app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
+    token = register(client, "workflow-pdf@example.com", "Workflow PDF")
+    first = client.post("/api/agents", headers=headers(token), json={
+        "name": "cv_ai", "system_tools": ["pdf_to_text"]
+    }).json()
+    second = client.post("/api/agents", headers=headers(token), json={
+        "name": "review_ai", "system_tools": ["pdf_to_text"]
+    }).json()
+    workflow = client.post("/api/workflows", headers=headers(token), json={
+        "name": "PDF artifact handoff",
+        "steps": [
+            {"step_key": "candidate_profile", "name": "Candidate profile", "step_type": "agent", "position": 0, "agent_id": first["id"]},
+            {"step_key": "review", "name": "Review", "step_type": "agent", "position": 1, "agent_id": second["id"]},
+        ],
+        "routes": [{"source_step_key": "candidate_profile", "target_step_key": "review", "condition": "success"}],
+    }).json()
+    uploaded = client.post(
+        "/api/attachments",
+        headers=headers(token),
+        files={"file": ("candidate.pdf", b"%PDF-1.4\nworkflow test", "application/pdf")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+
+    response = client.post(
+        f"/api/workflows/{workflow['id']}/runs",
+        headers=headers(token),
+        json={
+            "input_data": {"request": "Extract and review"},
+            "attachment_ids": [uploaded.json()["id"]],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    wait_for_run(client, token, response.json()["id"], {"completed", "failed", "waiting"})
+    assert FakeWorkflowLLM.attachment_counts == [1, 0]
+    assert response.json()["artifacts"][0]["data"]["attachments"][0]["filename"] == "candidate.pdf"
 
 
 def test_failed_step_is_persisted(client: TestClient) -> None:
@@ -138,6 +218,8 @@ def test_failed_step_is_persisted(client: TestClient) -> None:
     )
     assert response.status_code == 201
     run = response.json()
+    assert run["status"] == "running"
+    run = wait_for_run(client, token, run["id"], {"failed"})
     assert run["status"] == "failed"
     assert run["step_runs"][0]["status"] == "failed"
     assert run["error"]
