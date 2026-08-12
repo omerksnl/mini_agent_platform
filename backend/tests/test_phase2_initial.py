@@ -61,6 +61,19 @@ def create_conversation(client: TestClient, token: str, agent_id: str) -> dict:
     return response.json()
 
 
+def test_delete_agent_cascades_its_conversations(client: TestClient) -> None:
+    token = register(client, email="delete-agent-chat@example.com", tenant_name="Delete Agent Chat")
+    agent = create_agent(client, token, "Agent with conversation")
+    conversation = create_conversation(client, token, agent["id"])
+
+    deleted = client.delete(f"/api/agents/{agent['id']}", headers=auth_headers(token))
+
+    assert deleted.status_code == 204
+    assert client.get(
+        f"/api/conversations/{conversation['id']}", headers=auth_headers(token)
+    ).status_code == 404
+
+
 def test_conversation_crud_and_tenant_isolation(client: TestClient) -> None:
     tenant_a_token = register(client, email="conversation-a@example.com", tenant_name="Tenant A")
     tenant_a_agent = create_agent(client, tenant_a_token)

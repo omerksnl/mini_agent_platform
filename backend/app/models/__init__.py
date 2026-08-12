@@ -107,7 +107,10 @@ class Agent(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="agents")
-    conversations: Mapped[list["Conversation"]] = relationship(back_populates="agent")
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
     http_tools: Mapped[list["HttpTool"]] = relationship(
         secondary=agent_tools,
         back_populates="agents",
