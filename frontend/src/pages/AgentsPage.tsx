@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { api, type Agent, type AgentInput, type Collection, type HttpTool, type Skill } from "../api";
 import { useAuth } from "../AuthContext";
@@ -21,6 +21,7 @@ const emptyForm: AgentInput = {
 type PanelMode = "idle" | "create" | "edit";
 
 export function AgentsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { me, logout } = useAuth();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tools, setTools] = useState<HttpTool[]>([]);
@@ -55,11 +56,18 @@ export function AgentsPage() {
     void loadAgents();
   }, []);
 
+  useEffect(() => {
+    const editId = searchParams.get("edit");
+    const agent = agents.find((item) => item.id === editId && item.agent_type === "normal");
+    if (agent) startEdit(agent);
+  }, [agents, searchParams]);
+
   function closePanel() {
     setMode("idle");
     setEditingId(null);
     setForm(emptyForm);
     setError("");
+    if (searchParams.has("edit")) setSearchParams({});
   }
 
   function startCreate() {
@@ -166,7 +174,7 @@ export function AgentsPage() {
           <ul className="agent-list agent-tree">
             {displayedAgents.map((agent) => (
               <li key={agent.id} className={`agent-tree-row ${editingId === agent.id ? "active" : ""}`}>
-                {agent.agent_type === "supervisor" ? <Link className="agent-item" to="/multi-agent">
+                {agent.agent_type === "supervisor" ? <Link className="agent-item" to={`/multi-agent?mode=supervisor&edit=${agent.id}`}>
                   <span className="agent-name-line"><strong>{agent.name}</strong><span className={`agent-type-badge${agent.agent_type === "supervisor" ? " supervisor" : ""}`}>{agent.agent_type === "supervisor" ? "Supervisor" : "Agent"}</span></span>
                   <span className="agent-meta">{agent.model} · t={agent.temperature}</span>
                 </Link> : <button type="button" className="agent-item" onClick={() => startEdit(agent)}>
