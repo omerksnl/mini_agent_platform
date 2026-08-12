@@ -110,3 +110,49 @@ class WorkflowResponse(BaseModel):
     routes: list[WorkflowRouteResponse]
     created_at: datetime
     updated_at: datetime
+
+
+RunStatus = Literal["running", "waiting", "completed", "failed"]
+
+
+class WorkflowRunStart(BaseModel):
+    input_data: dict = Field(default_factory=dict)
+
+
+class WorkflowRunResume(BaseModel):
+    input_data: dict = Field(min_length=1)
+
+
+class WorkflowStepRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    sequence: int
+    step_key: str
+    step_name: str
+    step_type: StepType
+    status: RunStatus
+    input_data: dict
+    output_data: dict
+    error: str | None
+    api_cost_usd: float
+    started_at: datetime
+    completed_at: datetime | None
+
+
+class WorkflowRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    workflow_id: UUID
+    status: RunStatus
+    current_step_id: UUID | None
+    input_data: dict
+    output_data: dict
+    error: str | None
+    total_api_cost_usd: float
+    step_runs: list[WorkflowStepRunResponse]
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None

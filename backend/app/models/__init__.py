@@ -217,6 +217,9 @@ class Workflow(Base):
         cascade="all, delete-orphan",
         order_by="WorkflowRoute.priority",
     )
+    runs: Mapped[list["WorkflowRun"]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
 
 
 class WorkflowStep(Base):
@@ -291,6 +294,74 @@ class WorkflowRoute(Base):
     @property
     def target_step_key(self) -> str:
         return self.target_step.step_key
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'waiting', 'completed', 'failed')",
+            name="ck_workflow_runs_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    current_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="SET NULL"), nullable=True
+    )
+    input_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="runs")
+    current_step: Mapped[WorkflowStep | None] = relationship(foreign_keys=[current_step_id])
+    step_runs: Mapped[list["WorkflowStepRun"]] = relationship(
+        back_populates="workflow_run", cascade="all, delete-orphan", order_by="WorkflowStepRun.sequence"
+    )
+
+
+class WorkflowStepRun(Base):
+    __tablename__ = "workflow_step_runs"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "sequence", name="uq_workflow_step_runs_sequence"),
+        CheckConstraint(
+            "status IN ('running', 'waiting', 'completed', 'failed')",
+            name="ck_workflow_step_runs_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="SET NULL"), nullable=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    step_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    step_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    input_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="step_runs")
+    workflow_step: Mapped[WorkflowStep | None] = relationship(foreign_keys=[workflow_step_id])
 
 
 class Skill(Base):
