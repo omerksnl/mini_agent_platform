@@ -461,6 +461,26 @@ label {
 .workflow-list .agent-item span { display: grid; gap: 4px; text-align: left; }
 .workflow-list .agent-item small { color: var(--muted); }
 .workflow-list .agent-item.selected { border-color: var(--primary); }
+.workflow-list-actions { display: grid; gap: 6px; }
+.workflow-run-summary { display: flex; justify-content: space-between; align-items: center; padding: 14px; border: 1px solid var(--line); border-left: 4px solid var(--primary); border-radius: 4px; background: var(--input-bg); text-transform: capitalize; }
+.workflow-run-summary > span { display: grid; gap: 3px; }
+.workflow-run-summary small { color: var(--text); text-transform: none; }
+.workflow-progress { height: 12px; overflow: hidden; border-radius: 999px; background: #dedede; }
+.workflow-progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width 0.3s ease; }
+.workflow-run-steps { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.run-step { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); }
+.run-step > span:nth-child(2) { display: grid; gap: 3px; }
+.run-step small { color: var(--text); text-transform: capitalize; }
+.run-step-marker { width: 12px; height: 12px; border: 2px solid var(--muted); border-radius: 50%; background: var(--box); }
+.run-step.status-completed .run-step-marker { border-color: #4f9f73; background: #4f9f73; }
+.run-step.status-running .run-step-marker { border-color: var(--primary); background: var(--primary); }
+.run-step.status-waiting .run-step-marker { border-color: #d6973e; background: #d6973e; }
+.run-step.status-failed .run-step-marker { border-color: #b93636; background: #b93636; }
+.run-step-error { color: #b93636 !important; text-transform: none !important; }
+.human-wait-form { display: grid; gap: 12px; padding: 16px; border: 1px solid #e2b86f; border-radius: 4px; background: #fff9ee; }
+.workflow-result { display: grid; gap: 8px; padding: 16px; border: 1px solid #84bd9e; border-radius: 4px; background: #f2fbf6; }
+.workflow-result pre { max-height: 260px; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.workflow-run-cost { text-align: right; font-size: 0.72rem; color: var(--muted); }
 .btn-compact { padding: 6px 9px; font-size: 0.7rem; }
 
 .checkbox-line {

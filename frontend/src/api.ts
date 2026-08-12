@@ -153,6 +153,17 @@ export type Workflow = WorkflowInput & {
   created_at: string;
   updated_at: string;
 };
+export type WorkflowRunStatus = "running" | "waiting" | "completed" | "failed";
+export type WorkflowStepRun = {
+  id: string; sequence: number; step_key: string; step_name: string; step_type: WorkflowStepType;
+  status: WorkflowRunStatus; input_data: Record<string, unknown>; output_data: Record<string, unknown>;
+  error: string | null; api_cost_usd: number; started_at: string; completed_at: string | null;
+};
+export type WorkflowRun = {
+  id: string; tenant_id: string; workflow_id: string; status: WorkflowRunStatus; current_step_id: string | null;
+  input_data: Record<string, unknown>; output_data: Record<string, unknown>; error: string | null;
+  total_api_cost_usd: number; step_runs: WorkflowStepRun[]; created_at: string; updated_at: string; completed_at: string | null;
+};
 
 const TOKEN_KEY = "access_token";
 
@@ -288,6 +299,14 @@ export const api = {
     return request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   },
   deleteWorkflow(id: string) { return request<void>(`/api/workflows/${id}`, { method: "DELETE" }); },
+  listWorkflowRuns(id: string) { return request<WorkflowRun[]>(`/api/workflows/${id}/runs`); },
+  startWorkflowRun(id: string, inputData: Record<string, unknown>) {
+    return request<WorkflowRun>(`/api/workflows/${id}/runs`, { method: "POST", body: JSON.stringify({ input_data: inputData }) });
+  },
+  getWorkflowRun(id: string) { return request<WorkflowRun>(`/api/workflows/runs/${id}`); },
+  resumeWorkflowRun(id: string, inputData: Record<string, unknown>) {
+    return request<WorkflowRun>(`/api/workflows/runs/${id}/resume`, { method: "POST", body: JSON.stringify({ input_data: inputData }) });
+  },
   listConversations() {
     return request<Conversation[]>("/api/conversations");
   },

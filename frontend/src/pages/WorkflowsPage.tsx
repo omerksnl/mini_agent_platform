@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { api, type Agent, type AgentInput, type HttpTool, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowStepType } from "../api";
+import { api, type Agent, type AgentInput, type HttpTool, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
 import { useAuth } from "../AuthContext";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 
@@ -31,6 +31,11 @@ export function WorkflowsPage() {
   const [showSupervisorForm, setShowSupervisorForm] = useState(false);
   const [supervisorForm, setSupervisorForm] = useState<AgentInput>(blankSupervisor);
   const [savingSupervisor, setSavingSupervisor] = useState(false);
+  const [runWorkflow, setRunWorkflow] = useState<Workflow | null>(null);
+  const [activeRun, setActiveRun] = useState<WorkflowRun | null>(null);
+  const [runInput, setRunInput] = useState("");
+  const [humanInput, setHumanInput] = useState("");
+  const [running, setRunning] = useState(false);
 
   async function load() {
     setLoading(true); setError("");
@@ -105,6 +110,23 @@ export function WorkflowsPage() {
     catch (err) { setError(err instanceof Error ? err.message : "Supervisor could not be created"); }
     finally { setSavingSupervisor(false); }
   }
+  function openRunner(workflow: Workflow) {
+    setRunWorkflow(workflow); setActiveRun(null); setRunInput(""); setHumanInput(""); setEditingId(null); setForm(blank); setError("");
+  }
+  async function startRun(event: FormEvent) {
+    event.preventDefault(); if (!runWorkflow) return; setRunning(true); setError("");
+    try { setActiveRun(await api.startWorkflowRun(runWorkflow.id, { request: runInput.trim() })); }
+    catch (err) { setError(err instanceof Error ? err.message : "Workflow could not be started"); }
+    finally { setRunning(false); }
+  }
+  async function resumeRun(event: FormEvent) {
+    event.preventDefault(); if (!activeRun) return; setRunning(true); setError("");
+    try { setActiveRun(await api.resumeWorkflowRun(activeRun.id, { response: humanInput.trim() })); setHumanInput(""); }
+    catch (err) { setError(err instanceof Error ? err.message : "Workflow could not be resumed"); }
+    finally { setRunning(false); }
+  }
+  const completedSteps = activeRun?.step_runs.filter((step) => step.status === "completed").length ?? 0;
+  const progress = runWorkflow ? Math.round((completedSteps / runWorkflow.steps.length) * 100) : 0;
 
   return <div className="app-shell">
     <header className="box topbar"><div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div><div className="topbar-actions"><Link className="btn" to="/">Agents</Link><Link className="btn btn-primary" to="/multi-agent">Multi-agent</Link><Link className="btn" to="/chat">Chat</Link><button className="btn" onClick={logout}>Sign out</button></div></header>
@@ -119,9 +141,20 @@ export function WorkflowsPage() {
     </section>
     {executionMode === "workflow" ? <main className="layout workflow-layout">
       <section className="box panel"><div className="panel-head"><h1>Workflow systems</h1><button className="btn btn-primary" onClick={() => { setEditingId(null); setForm({ ...blank, steps: [createStep(0, agents)] }); setError(""); }}>New multi-agent</button></div>
-        {loading ? <p>Loading...</p> : !items.length ? <p>No workflows yet.</p> : <ul className="agent-list workflow-list">{items.map((item) => <li key={item.id}><button className={`agent-item${editingId === item.id ? " selected" : ""}`} onClick={() => edit(item)}><span><strong>{item.name}</strong><small>{item.steps.length} steps · {item.is_active ? "Active" : "Inactive"}</small></span></button><button className="btn btn-danger" onClick={() => setPendingDelete(item)}>Delete</button></li>)}</ul>}
+        {loading ? <p>Loading...</p> : !items.length ? <p>No workflows yet.</p> : <ul className="agent-list workflow-list">{items.map((item) => <li key={item.id}><button className={`agent-item${editingId === item.id || runWorkflow?.id === item.id ? " selected" : ""}`} onClick={() => edit(item)}><span><strong>{item.name}</strong><small>{item.steps.length} steps · {item.is_active ? "Active" : "Inactive"}</small></span></button><div className="workflow-list-actions"><button className="btn btn-primary btn-compact" disabled={!item.is_active} onClick={() => openRunner(item)}>Run</button><button className="btn btn-danger btn-compact" onClick={() => setPendingDelete(item)}>Delete</button></div></li>)}</ul>}
       </section>
-      <section className="box panel">{!open ? <div className="idle-panel"><p className="idle-title">Build a workflow</p><p>Create a workflow or select one to edit.</p></div> : <form className="stack" onSubmit={save}>
+      <section className="box panel">{runWorkflow ? <div className="stack workflow-run-panel">
+        <div className="panel-head"><div><h1>{runWorkflow.name}</h1><p>Run and monitor this workflow.</p></div><button type="button" className="icon-close" onClick={() => { setRunWorkflow(null); setActiveRun(null); }}>×</button></div>
+        {!activeRun ? <form className="stack" onSubmit={startRun}><label>Initial request<textarea rows={5} required placeholder="Describe the task and provide the initial workflow input." value={runInput} onChange={(event) => setRunInput(event.target.value)} /></label><button className="btn btn-primary" disabled={running}>{running ? "Starting..." : "Start workflow"}</button></form> : <>
+          <div className={`workflow-run-summary status-${activeRun.status}`}><span><strong>{activeRun.status === "waiting" ? "Waiting for human input" : activeRun.status}</strong><small>{completedSteps} of {runWorkflow.steps.length} steps completed</small></span><strong>{progress}%</strong></div>
+          <div className="workflow-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${progress}%` }} /></div>
+          <ol className="workflow-run-steps">{[...runWorkflow.steps].sort((a, b) => a.position - b.position).map((definition) => { const stepRun = activeRun.step_runs.find((step) => step.step_key === definition.step_key); const status = stepRun?.status ?? "pending"; return <li className={`run-step status-${status}`} key={definition.id}><span className="run-step-marker" /><span><strong>{definition.name}</strong><small>{definition.step_type.replace("_", " ")} · {status}</small>{stepRun?.error ? <small className="run-step-error">{stepRun.error}</small> : null}</span>{stepRun?.api_cost_usd ? <small>${stepRun.api_cost_usd.toFixed(6)}</small> : null}</li>; })}</ol>
+          {activeRun.status === "waiting" ? <form className="human-wait-form" onSubmit={resumeRun}><label>Required human input<textarea rows={4} required value={humanInput} onChange={(event) => setHumanInput(event.target.value)} placeholder="Enter approval, interview answers, or the requested information." /></label><button className="btn btn-primary" disabled={running}>{running ? "Continuing..." : "Continue workflow"}</button></form> : null}
+          {activeRun.status === "failed" ? <p className="alert">{activeRun.error}</p> : null}
+          {activeRun.status === "completed" ? <div className="workflow-result"><strong>Workflow completed</strong><pre>{JSON.stringify(activeRun.output_data.last_output ?? activeRun.output_data, null, 2)}</pre></div> : null}
+          <p className="workflow-run-cost">API cost: ${activeRun.total_api_cost_usd.toFixed(6)}</p>
+        </>}
+      </div> : !open ? <div className="idle-panel"><p className="idle-title">Build a workflow</p><p>Create a workflow or select one to edit.</p></div> : <form className="stack" onSubmit={save}>
         <div className="panel-head"><h1>{editingId ? "Edit workflow" : "New workflow"}</h1><button type="button" className="icon-close" onClick={() => { setEditingId(null); setForm(blank); }}>×</button></div>
         <label>Name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
         <label>Description<textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
