@@ -24,6 +24,7 @@ from app.core.tools.pdf_tools import build_pdf_to_text_tool
 from app.core.tools.collection_tools import build_collection_search_tool
 from app.core.tools.supervisor_tools import build_delegation_tools
 from app.core.candidate_profile import normalize_candidate_profile_json
+from app.core.observability import build_langfuse_handler, langfuse_metadata
 
 
 class LLMError(Exception):
@@ -90,6 +91,8 @@ class LLMClient(Protocol):
         db: Session | None = None,
         skip_response_validation: bool = False,
         use_collections: bool = True,
+        skip_request_routing: bool = False,
+        max_output_tokens: int | None = None,
     ) -> LLMResult | str: ...
 
 
@@ -116,6 +119,8 @@ class OpenRouterLLMClient:
         db: Session | None = None,
         skip_response_validation: bool = False,
         use_collections: bool = True,
+        skip_request_routing: bool = False,
+        max_output_tokens: int | None = None,
     ) -> LLMResult:
         is_supervisor = agent.agent_type == "supervisor"
         if is_supervisor and not agent.managed_agents:
@@ -126,7 +131,15 @@ class OpenRouterLLMClient:
             self.settings.llm_input_cost_per_million_usd,
             self.settings.llm_output_cost_per_million_usd,
         )
-        max_tokens = (
+        langfuse_handler = build_langfuse_handler(self.settings)
+        tracing_callbacks = [cost_callback]
+        if langfuse_handler is not None:
+            tracing_callbacks.append(langfuse_handler)
+        tracing_metadata = langfuse_metadata(
+            agent_name=agent.name,
+            agent_type=agent.agent_type,
+        )
+        default_max_tokens = (
             self.settings.cv_extraction_max_tokens
             if attachments and not is_supervisor
             else self.settings.supervisor_max_tokens
@@ -135,6 +148,7 @@ class OpenRouterLLMClient:
             if agent.collections
             else self.settings.llm_max_tokens
         )
+        max_tokens = max_output_tokens or default_max_tokens
         model = ChatOpenAI(
             model=agent.model,
             temperature=agent.temperature,
@@ -203,6 +217,13 @@ class OpenRouterLLMClient:
                 skill_names=["cv_extraction"],
                 required_tool_names=["pdf_to_text"],
             )
+        elif skip_request_routing:
+            latest_user = next(
+                (item["content"] for item in reversed(messages) if item["role"] == "user"),
+                "",
+            )
+            routing = RoutingDecision(request_parts=[latest_user])
+            selected_skills = []
         else:
             routing = self._route_request(
                 model,
@@ -210,6 +231,8 @@ class OpenRouterLLMClient:
                 agent.skills,
                 selected_tools,
                 cost_callback,
+                tracing_callbacks,
+                tracing_metadata,
             )
             selected_skill_names = set(routing.skill_names)
             selected_skills = [skill for skill in agent.skills if skill.name in selected_skill_names]
@@ -238,7 +261,14 @@ class OpenRouterLLMClient:
             agent, selected_skills, required_tool_names, unavailable_skill_tools
         )
         result_messages = self._invoke_agent(
-            model, selected_tools, system_prompt, messages, cost_callback
+            model,
+            selected_tools,
+            system_prompt,
+            messages,
+            cost_callback,
+            is_collection_run=bool(agent.collections),
+            tracing_callbacks=tracing_callbacks,
+            tracing_metadata=tracing_metadata,
         )
         content = self._last_assistant_text(result_messages)
         if not content:
@@ -252,6 +282,8 @@ class OpenRouterLLMClient:
             content,
             result_messages,
             cost_callback,
+            tracing_callbacks,
+            tracing_metadata,
         ) if not skip_response_validation and not attachments and (len(routing.request_parts) > 1 or required_tool_names) else ValidationDecision(complete=True)
         profile_invalid = self._candidate_profile_invalid(selected_skills, content)
 
@@ -261,7 +293,14 @@ class OpenRouterLLMClient:
                 correction += " Return only one valid CandidateProfile JSON object matching the skill schema."
             retry_prompt = f"{system_prompt}\n\nCORRECTION REQUIRED\n{correction}"
             result_messages = self._invoke_agent(
-                model, selected_tools, retry_prompt, messages, cost_callback
+                model,
+                selected_tools,
+                retry_prompt,
+                messages,
+                cost_callback,
+                is_collection_run=bool(agent.collections),
+                tracing_callbacks=tracing_callbacks,
+                tracing_metadata=tracing_metadata,
             )
             content = self._last_assistant_text(result_messages)
             if not content:
@@ -275,6 +314,8 @@ class OpenRouterLLMClient:
                 content,
                 result_messages,
                 cost_callback,
+                tracing_callbacks,
+                tracing_metadata,
             ) if not skip_response_validation and not attachments else ValidationDecision(complete=True)
             profile_invalid = self._candidate_profile_invalid(selected_skills, content)
             if missing_tools:
@@ -315,10 +356,33 @@ class OpenRouterLLMClient:
         system_prompt: str,
         messages: list[dict[str, str]],
         cost_callback: ApiCostCallbackHandler,
+        is_collection_run: bool = False,
+        tracing_callbacks: list[Any] | None = None,
+        tracing_metadata: dict[str, Any] | None = None,
     ) -> list[Any]:
+        callbacks = tracing_callbacks or [cost_callback]
+        metadata = tracing_metadata or {}
+        # A tool-free agent does not need a LangGraph execution loop. Calling
+        # the chat model directly avoids graph recursion/model-call limits and
+        # guarantees that a scoring or formatting-only node makes one model
+        # request instead of entering an unnecessary agent cycle.
+        if not tools:
+            try:
+                response = model.invoke(
+                    [SystemMessage(content=system_prompt), *messages],
+                    config={"callbacks": callbacks, "metadata": metadata},
+                )
+            except OpenAIError as exc:
+                raise LLMError("The language model request failed") from exc
+            return [response]
+
         tool_names = {getattr(tool, "name", "") for tool in tools}
         is_supervisor_run = any(name.startswith("delegate_to_") for name in tool_names)
-        is_rag_run = "collection_search" in tool_names
+        # Full-context collection nodes do not expose collection_search, but they
+        # still process RAG-sized context and may legitimately need several
+        # calculation/tool turns. Keep the collection execution budget for both
+        # semantic-search and full-context modes.
+        is_rag_run = is_collection_run or "collection_search" in tool_names
         tool_limit = (
             self.settings.supervisor_tool_call_limit if is_supervisor_run
             else self.settings.rag_tool_call_limit if is_rag_run
@@ -349,7 +413,8 @@ class OpenRouterLLMClient:
                 {"messages": messages},
                 config={
                     "recursion_limit": recursion_limit,
-                    "callbacks": [cost_callback],
+                    "callbacks": callbacks,
+                    "metadata": metadata,
                 },
             )
         except GraphRecursionError as exc:
@@ -367,6 +432,8 @@ class OpenRouterLLMClient:
         skills: list[Any],
         tools: list[Any],
         cost_callback: ApiCostCallbackHandler | None = None,
+        tracing_callbacks: list[Any] | None = None,
+        tracing_metadata: dict[str, Any] | None = None,
     ) -> RoutingDecision:
         skill_catalog = "\n".join(
             f"- {skill.name}: {skill.description}" for skill in skills
@@ -387,9 +454,13 @@ class OpenRouterLLMClient:
                 )),
                 HumanMessage(content=latest_user),
             ]
+            callbacks = tracing_callbacks or ([cost_callback] if cost_callback else [])
             decision = (
-                router.invoke(router_messages, config={"callbacks": [cost_callback]})
-                if cost_callback
+                router.invoke(router_messages, config={
+                    "callbacks": callbacks,
+                    "metadata": tracing_metadata or {},
+                })
+                if callbacks or tracing_metadata
                 else router.invoke(router_messages)
             )
         except Exception as exc:
@@ -453,6 +524,8 @@ class OpenRouterLLMClient:
         content: str,
         result_messages: list[Any],
         cost_callback: ApiCostCallbackHandler,
+        tracing_callbacks: list[Any] | None = None,
+        tracing_metadata: dict[str, Any] | None = None,
     ) -> ValidationDecision:
         tool_results = [
             f"{message.name}: {message.content}"
@@ -469,7 +542,10 @@ class OpenRouterLLMClient:
                 HumanMessage(content=(
                     f"REQUEST PARTS:\n{request_parts}\n\nTOOL RESULTS:\n{tool_results}\n\nANSWER:\n{content}"
                 )),
-            ], config={"callbacks": [cost_callback]})
+            ], config={
+                "callbacks": tracing_callbacks or [cost_callback],
+                "metadata": tracing_metadata or {},
+            })
         except Exception as exc:
             raise LLMError("The response validator failed") from exc
 

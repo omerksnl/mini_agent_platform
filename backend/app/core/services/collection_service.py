@@ -96,6 +96,62 @@ class CollectionService:
         stmt = select(DocumentChunk, distance.label("distance")).where(DocumentChunk.tenant_id == tenant_id, DocumentChunk.collection_id.in_(collection_ids)).order_by(distance).limit(limit or self.settings.collection_search_results)
         return [(chunk, max(0.0, 1.0 - float(value))) for chunk, value in self.db.execute(stmt).all()]
 
+    def read_all_text(
+        self, tenant_id: UUID, collection_ids: list[UUID], max_characters: int = 50_000
+    ) -> str:
+        if not collection_ids:
+            return ""
+        chunks = list(self.db.scalars(
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.tenant_id == tenant_id,
+                DocumentChunk.collection_id.in_(collection_ids),
+            )
+            .order_by(DocumentChunk.document_id, DocumentChunk.position)
+        ).all())
+        blocks: list[str] = []
+        total = 0
+        for chunk in chunks:
+            source = chunk.document.original_name
+            location = f", page {chunk.page_number}" if chunk.page_number else ""
+            block = f"[Source: {source}{location}]\n{chunk.content}"
+            if total + len(block) > max_characters:
+                remaining = max_characters - total
+                if remaining > 200:
+                    blocks.append(block[:remaining])
+                break
+            blocks.append(block)
+            total += len(block)
+        return "\n\n---\n\n".join(blocks)
+
+    def search_text(
+        self,
+        tenant_id: UUID,
+        collection_ids: list[UUID],
+        query: str,
+        *,
+        limit: int | None = None,
+        max_characters: int = 12_000,
+    ) -> str:
+        """Return compact, source-labelled semantic-search context for one LLM call."""
+        results = self.search(tenant_id, collection_ids, query, limit)
+        blocks: list[str] = []
+        total = 0
+        for chunk, score in results:
+            source = chunk.document.original_name
+            location = f", page {chunk.page_number}" if chunk.page_number else ""
+            block = f"[Source: {source}{location}; relevance: {score:.3f}]\n{chunk.content}"
+            remaining = max_characters - total
+            if remaining <= 0:
+                break
+            if len(block) > remaining:
+                if remaining > 200:
+                    blocks.append(block[:remaining])
+                break
+            blocks.append(block)
+            total += len(block)
+        return "\n\n---\n\n".join(blocks)
+
     def _extract_sections(self, suffix: str, data: bytes) -> list[tuple[str, int | None]]:
         if suffix == ".pdf":
             try:

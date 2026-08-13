@@ -134,3 +134,30 @@ def test_correction_instructions_cover_tools_and_missing_parts() -> None:
     assert "current_datetime" in result
     assert "Give current Istanbul time" in result
     assert "Retry the entire answer" in result
+
+
+def test_tool_free_agent_invokes_model_directly_once() -> None:
+    class FakeModel:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def invoke(self, messages, config):
+            self.calls.append((messages, config))
+            return AIMessage(content="Scoring completed")
+
+    client = object.__new__(OpenRouterLLMClient)
+    model = FakeModel()
+    callback = ApiCostCallbackHandler(input_rate=1.0, output_rate=5.0)
+
+    result = client._invoke_agent(
+        model,
+        [],
+        "Score the candidate.",
+        [{"role": "user", "content": "Evaluate this profile."}],
+        callback,
+        is_collection_run=True,
+    )
+
+    assert len(model.calls) == 1
+    assert model.calls[0][0][0].content == "Score the candidate."
+    assert result == [AIMessage(content="Scoring completed")]

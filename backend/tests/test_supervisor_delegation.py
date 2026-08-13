@@ -123,7 +123,7 @@ def test_supervisor_forwards_attachments_only_to_pdf_capable_child(
         llm = RecordingClient()
         llm._route_request = lambda *args, **kwargs: RoutingDecision(request_parts=["process"], required_tool_names=[])
 
-        def invoke(_model, tools, _prompt, _messages, _callback):
+        def invoke(_model, tools, _prompt, _messages, _callback, **_kwargs):
             delegation = next(tool for tool in tools if tool.name.startswith("delegate_to_"))
             result = delegation.invoke({"task": "Extract CandidateProfile"})
             return [AIMessage(content=result)]

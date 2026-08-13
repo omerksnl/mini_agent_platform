@@ -17,6 +17,7 @@ class FakeWorkflowLLM:
     def complete(
         self, agent, messages, http_tools=None, attachments=None, db=None,
         skip_response_validation=False, use_collections=True,
+        skip_request_routing=False, max_output_tokens=None,
     ):
         self.messages.append(messages)
         self.attachment_counts.append(len(attachments or []))
@@ -153,15 +154,15 @@ def test_agent_receives_all_prior_workflow_artifacts(client: TestClient) -> None
     wait_for_run(client, token, response.json()["id"], {"completed", "failed", "waiting"})
     assert len(FakeWorkflowLLM.messages) == 2
     second_prompt = FakeWorkflowLLM.messages[1][0]["content"]
-    assert '"key": "workflow_input"' in second_prompt
-    assert '"key": "candidate_profile"' in second_prompt
+    assert '"key":"workflow_input"' not in second_prompt
+    assert '"key":"candidate_profile"' in second_prompt
     assert "processed by cv_ai" in second_prompt
     assert "Execute only your assigned specialist task" in second_prompt
     assert "NODE TASK INSTRUCTIONS" in second_prompt
     assert "Use prior candidate evidence only." in second_prompt
     assert not second_prompt.startswith("Evaluate candidate\n")
     assert FakeWorkflowLLM.validation_flags == [True, True]
-    assert FakeWorkflowLLM.collection_flags == [True, False]
+    assert FakeWorkflowLLM.collection_flags == [False, False]
 
 
 def test_workflow_pdf_is_attached_to_run_and_only_first_pdf_agent(client: TestClient) -> None:

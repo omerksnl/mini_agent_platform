@@ -154,6 +154,38 @@ Important environment variables:
 | `OPENROUTER_BASE_URL` | OpenRouter API base URL |
 | `REDIS_URL` | Optional Redis cache connection |
 | `CORS_ORIGINS` | Allowed browser origins |
+| `LANGFUSE_PUBLIC_KEY` | Optional Langfuse project public key |
+| `LANGFUSE_SECRET_KEY` | Optional Langfuse project secret key |
+| `LANGFUSE_BASE_URL` | Langfuse Cloud region or self-hosted URL |
+| `LANGFUSE_TRACING_ENVIRONMENT` | Trace environment such as `development` |
+
+## Langfuse observability
+
+Langfuse tracing is optional and supplements the platform's own PostgreSQL API-cost
+records. Create a Langfuse project, copy its public and secret keys into
+`backend/.env`, and rebuild the backend:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_TRACING_ENVIRONMENT=development
+```
+
+```powershell
+docker compose up -d --build backend
+```
+
+LangChain model, agent, and tool events are then sent to Langfuse. Workflow
+steps include workflow, run, tenant, agent, and artifact-key metadata; traces
+from the same workflow run share one Langfuse session ID. If the keys are empty
+or Langfuse is temporarily unavailable, workflows and the existing cost tracker
+continue to operate normally.
+
+Tracing can include prompts, model responses, tool inputs, and tool outputs.
+Because recruitment workflows may contain CV and interview information, use an
+approved Langfuse deployment and retention policy before enabling tracing with
+real candidate data. Leave both keys empty to keep tracing disabled.
 
 Useful checks:
 

@@ -36,10 +36,25 @@ class WorkflowStepInput(BaseModel):
         if self.step_type == "agent":
             task_instructions = self.config.get("task_instructions", "")
             use_collections = self.config.get("use_collections", True)
+            collection_mode = self.config.get("collection_mode")
             if not isinstance(task_instructions, str) or len(task_instructions) > 4000:
                 raise ValueError("Agent task_instructions must be text up to 4000 characters")
             if not isinstance(use_collections, bool):
                 raise ValueError("Agent use_collections must be true or false")
+            if collection_mode is not None and collection_mode not in {"off", "search", "full_context"}:
+                raise ValueError("Agent collection_mode must be off, search, or full_context")
+            input_artifact_keys = self.config.get("input_artifact_keys")
+            if input_artifact_keys is not None and (
+                not isinstance(input_artifact_keys, list)
+                or len(input_artifact_keys) > 20
+                or any(not isinstance(key, str) or not key or len(key) > 64 for key in input_artifact_keys)
+            ):
+                raise ValueError("Agent input_artifact_keys must be a list of up to 20 artifact keys")
+            max_output_tokens = self.config.get("max_output_tokens")
+            if max_output_tokens is not None and (
+                not isinstance(max_output_tokens, int) or not 256 <= max_output_tokens <= 8000
+            ):
+                raise ValueError("Agent max_output_tokens must be between 256 and 8000")
         return self
 
 

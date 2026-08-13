@@ -8,8 +8,10 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.services.llm_service import LLMClient, LLMResult
 from app.core.services.attachment_service import AttachmentError, AttachmentService
 from app.core.services.workflow_service import WorkflowError, WorkflowService
+from app.core.services.collection_service import CollectionService
 from app.core.tools import SYSTEM_TOOL_MAP
 from app.core.tools.http_tools import build_http_tool
+from app.core.observability import bind_trace_context
 from app.models import (
     Workflow,
     WorkflowArtifact,
@@ -237,9 +239,16 @@ class WorkflowExecutionService:
                 self.db.commit()
                 return self.get_run(run.id, run.tenant_id)
             try:
-                output, cost = self._execute_step(
-                    current, self._state_with_artifacts(run), run.attachments
-                )
+                with bind_trace_context(
+                    workflow_run_id=run.id,
+                    workflow_id=workflow.id,
+                    workflow_name=workflow.name,
+                    tenant_id=run.tenant_id,
+                    step_key=current.step_key,
+                ):
+                    output, cost = self._execute_step(
+                        current, self._state_with_artifacts(run), run.attachments
+                    )
                 step_run.status = "completed"
                 step_run.output_data = output
                 step_run.api_cost_usd = cost
@@ -288,14 +297,44 @@ class WorkflowExecutionService:
                 }
                 for artifact in state.get("artifacts", [])
             ]
-            context = json.dumps(artifacts, ensure_ascii=False, default=str)
             has_agent_output = any(
                 artifact.get("type") == "agent_output" for artifact in artifacts
             )
+            requested_keys = step.config.get("input_artifact_keys")
+            if isinstance(requested_keys, list) and requested_keys:
+                allowed_keys = {str(key) for key in requested_keys}
+                artifacts = [artifact for artifact in artifacts if artifact["key"] in allowed_keys]
+            elif has_agent_output:
+                # The original request/attachment metadata has already been transformed
+                # into an agent artifact. Avoid paying to send it again downstream.
+                artifacts = [artifact for artifact in artifacts if artifact["type"] != "workflow_input"]
+            context = json.dumps(artifacts, ensure_ascii=False, default=str, separators=(",", ":"))
             task_instructions = str(step.config.get("task_instructions", "")).strip()
             use_collections = step.config.get("use_collections", True)
             if not isinstance(use_collections, bool):
                 use_collections = True
+            collection_mode = step.config.get(
+                "collection_mode", "search" if use_collections else "off"
+            )
+            if collection_mode not in {"off", "search", "full_context"}:
+                collection_mode = "search" if use_collections else "off"
+            full_collection_context = ""
+            if collection_mode == "full_context" and step.agent.collections:
+                full_collection_context = CollectionService(self.db).read_all_text(
+                    step.agent.tenant_id,
+                    [collection.id for collection in step.agent.collections],
+                )
+            elif collection_mode == "search" and step.agent.collections:
+                search_query_parts = [task_instructions, step.name]
+                for artifact in reversed(artifacts):
+                    if artifact["type"] == "human_input":
+                        search_query_parts.append(json.dumps(artifact["data"], ensure_ascii=False)[:2_000])
+                        break
+                full_collection_context = CollectionService(self.db).search_text(
+                    step.agent.tenant_id,
+                    [collection.id for collection in step.agent.collections],
+                    "\n".join(part for part in search_query_parts if part),
+                )
             request = (
                 state.get("request") or state.get("prompt") or f"Execute the {step.name} step."
                 if not has_agent_output
@@ -316,12 +355,17 @@ class WorkflowExecutionService:
                     f"{request}\n\nWORKFLOW ARTIFACTS\n{context}\n\n"
                     "Use every relevant artifact. Do not discard earlier artifacts merely because a newer one exists."
                     + (f"\n\nNODE TASK INSTRUCTIONS\n{task_instructions}" if task_instructions else "")
+                    + (f"\n\nPREFETCHED COLLECTION CONTEXT\n{full_collection_context}" if full_collection_context else "")
                 )}],
                 step.agent.http_tools,
                 attachments=step_attachments,
                 db=self.db if attachments or step.agent.collections or step.agent.agent_type == "supervisor" else None,
                 skip_response_validation=True,
-                use_collections=use_collections,
+                # Workflow nodes are deterministic. Collection retrieval is done
+                # above so the model does not need a router/tool-planning cycle.
+                use_collections=False,
+                skip_request_routing=True,
+                max_output_tokens=step.config.get("max_output_tokens"),
             )
             if isinstance(result, LLMResult):
                 return {

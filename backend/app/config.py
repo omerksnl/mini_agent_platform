@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_app_title: str = "Mini Agent Platform"
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_tracing_environment: str = "development"
     redis_url: str | None = None
     redis_cache_ttl_seconds: int = 300
     llm_max_tokens: int = 2000
@@ -43,6 +47,10 @@ class Settings(BaseSettings):
     collection_chunk_characters: int = 1600
     collection_chunk_overlap: int = 200
     collection_search_results: int = 5
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        return bool(self.langfuse_public_key and self.langfuse_secret_key)
 
     @property
     def cors_origin_list(self) -> list[str]:

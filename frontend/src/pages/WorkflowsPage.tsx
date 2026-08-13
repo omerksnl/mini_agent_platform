@@ -6,7 +6,8 @@ import { api, type Agent, type AgentInput, type Workflow, type WorkflowInput, ty
 import { useAuth } from "../AuthContext";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 
-type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; target_id: string; system_tool_name: string; required_input: string; task_instructions: string; use_collections: boolean; next_condition: WorkflowRouteCondition };
+type CollectionMode = "off" | "search" | "full_context";
+type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; target_id: string; system_tool_name: string; required_input: string; task_instructions: string; collection_mode: CollectionMode; input_artifact_keys: string; max_output_tokens: string; next_condition: WorkflowRouteCondition };
 type Form = { name: string; description: string; is_active: boolean; steps: StepForm[] };
 type ExecutionMode = "workflow" | "router" | "supervisor";
 const blank: Form = { name: "", description: "", is_active: true, steps: [] };
@@ -73,7 +74,7 @@ function RelationshipArrows({ count, id, twoWay = false }: { count: number; id: 
 
 function createStep(index: number, agents: Agent[]): StepForm {
   const agent = agents.find((item) => item.agent_type === "normal");
-  return { step_key: `step_${index + 1}`, name: agent?.name ?? `Human input ${index + 1}`, step_type: agent ? "agent" : "human_wait", target_id: agent?.id ?? "", system_tool_name: "", required_input: "", task_instructions: "", use_collections: true, next_condition: "success" };
+  return { step_key: `step_${index + 1}`, name: agent?.name ?? `Human input ${index + 1}`, step_type: agent ? "agent" : "human_wait", target_id: agent?.id ?? "", system_tool_name: "", required_input: "", task_instructions: "", collection_mode: "search", input_artifact_keys: "", max_output_tokens: "", next_condition: agent ? "success" : "input_available" };
 }
 
 function artifactKeyFor(name: string, existing: StepForm[]): string {
@@ -159,7 +160,12 @@ export function WorkflowsPage() {
     const kind = event.dataTransfer.getData("application/x-workflow-node");
     if (kind === "human_wait") {
       const index = form.steps.length;
-      setForm({ ...form, steps: [...form.steps, { ...createStep(index, []), step_key: `human_wait_${index + 1}`, name: "Human wait", step_type: "human_wait" }] });
+      setForm({ ...form, steps: [...form.steps, {
+        ...createStep(index, []),
+        step_key: artifactKeyFor("human_wait", form.steps),
+        name: "Human wait",
+        step_type: "human_wait",
+      }] });
       return;
     }
     const agent = agents.find((item) => item.id === kind && item.agent_type === "normal");
@@ -176,8 +182,12 @@ export function WorkflowsPage() {
       target_id: step.agent_id ?? step.http_tool_id ?? "", system_tool_name: step.system_tool_name ?? "calculator",
       required_input: typeof step.config.required_input === "string" ? step.config.required_input : "",
       task_instructions: typeof step.config.task_instructions === "string" ? step.config.task_instructions : "",
-      use_collections: typeof step.config.use_collections === "boolean" ? step.config.use_collections : true,
-      next_condition: index < steps.length - 1 ? workflow.routes.find((route) => route.source_step_key === step.step_key)?.condition ?? "success" : "success",
+      collection_mode: step.config.collection_mode === "off" || step.config.collection_mode === "search" || step.config.collection_mode === "full_context"
+        ? step.config.collection_mode
+        : step.config.use_collections === false ? "off" : "search",
+      input_artifact_keys: Array.isArray(step.config.input_artifact_keys) ? step.config.input_artifact_keys.join(", ") : "",
+      max_output_tokens: typeof step.config.max_output_tokens === "number" ? String(step.config.max_output_tokens) : "",
+      next_condition: step.step_type === "human_wait" ? "input_available" : index < steps.length - 1 ? workflow.routes.find((route) => route.source_step_key === step.step_key)?.condition ?? "success" : "success",
     })) });
   }
   function payload(): WorkflowInput {
@@ -195,10 +205,16 @@ export function WorkflowsPage() {
         config: step.step_type === "human_wait"
           ? step.required_input.trim() ? { required_input: step.required_input.trim() } : {}
           : step.step_type === "agent"
-            ? { task_instructions: step.task_instructions.trim(), use_collections: step.use_collections }
+            ? {
+                task_instructions: step.task_instructions.trim(),
+                collection_mode: step.collection_mode,
+                use_collections: step.collection_mode !== "off",
+                input_artifact_keys: step.input_artifact_keys.split(",").map((key) => key.trim()).filter(Boolean),
+                ...(step.max_output_tokens ? { max_output_tokens: Number(step.max_output_tokens) } : {}),
+              }
             : {},
       })),
-      routes: form.steps.slice(0, -1).map((step, index) => ({ source_step_key: step.step_key.trim(), target_step_key: form.steps[index + 1].step_key.trim(), condition: step.next_condition, priority: 0, config: {} })),
+      routes: form.steps.slice(0, -1).map((step, index) => ({ source_step_key: step.step_key.trim(), target_step_key: form.steps[index + 1].step_key.trim(), condition: step.step_type === "human_wait" ? "input_available" : step.next_condition, priority: 0, config: {} })),
     };
   }
   async function save(event: FormEvent) {
@@ -294,7 +310,7 @@ export function WorkflowsPage() {
             {form.steps.length ? <p className="drop-more-hint">Drop another node anywhere in this canvas to append it.</p> : null}
           </div>
         </div>
-        {selectedStepIndex !== null && form.steps[selectedStepIndex] ? <section className="workflow-node-settings"><div className="panel-head"><div><h2>Node settings</h2><p>Configure this node without changing the underlying agent.</p></div><button type="button" className="icon-close" onClick={() => setSelectedStepIndex(null)}>×</button></div><div className="workflow-step-grid"><label>Artifact name<input required maxLength={255} value={form.steps[selectedStepIndex].name} onChange={(event) => updateStep(selectedStepIndex, { name: event.target.value })} /></label><label>Artifact key<input required maxLength={64} pattern="[a-z][a-z0-9_]*" value={form.steps[selectedStepIndex].step_key} onChange={(event) => updateStep(selectedStepIndex, { step_key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })} /><span className="field-hint">Lowercase letters, numbers, and underscores.</span></label></div>{form.steps[selectedStepIndex].step_type === "agent" ? <><label>Task instructions<textarea rows={5} maxLength={4000} placeholder="Describe only what this agent should do at this workflow stage." value={form.steps[selectedStepIndex].task_instructions} onChange={(event) => updateStep(selectedStepIndex, { task_instructions: event.target.value })} /></label><label className="checkbox-line"><input type="checkbox" checked={form.steps[selectedStepIndex].use_collections} onChange={(event) => updateStep(selectedStepIndex, { use_collections: event.target.checked })} />Allow this node to search the agent's collections</label><span className="field-hint">Turn this off when all required information already exists in earlier artifacts.</span></> : null}</section> : null}
+        {selectedStepIndex !== null && form.steps[selectedStepIndex] ? <section className="workflow-node-settings"><div className="panel-head"><div><h2>Node settings</h2><p>Configure this node without changing the underlying agent.</p></div><button type="button" className="icon-close" onClick={() => setSelectedStepIndex(null)}>×</button></div><div className="workflow-step-grid"><label>Artifact name<input required maxLength={255} value={form.steps[selectedStepIndex].name} onChange={(event) => updateStep(selectedStepIndex, { name: event.target.value })} /></label><label>Artifact key<input required maxLength={64} pattern="[a-z][a-z0-9_]*" value={form.steps[selectedStepIndex].step_key} onChange={(event) => updateStep(selectedStepIndex, { step_key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })} /><span className="field-hint">Lowercase letters, numbers, and underscores.</span></label></div>{form.steps[selectedStepIndex].step_type === "agent" ? <><label>Task instructions<textarea rows={5} maxLength={4000} placeholder="Describe only what this agent should do at this workflow stage." value={form.steps[selectedStepIndex].task_instructions} onChange={(event) => updateStep(selectedStepIndex, { task_instructions: event.target.value })} /></label><div className="workflow-step-grid"><label>Collection access<select value={form.steps[selectedStepIndex].collection_mode} onChange={(event) => updateStep(selectedStepIndex, { collection_mode: event.target.value as CollectionMode })}><option value="off">Off</option><option value="search">Semantic search (prefetched)</option><option value="full_context">Full collection context</option></select></label><label>Maximum output tokens<input type="number" min={256} max={8000} placeholder="Use agent default" value={form.steps[selectedStepIndex].max_output_tokens} onChange={(event) => updateStep(selectedStepIndex, { max_output_tokens: event.target.value })} /></label></div><label>Input artifact keys<input placeholder="candidate_profile, job_fit, interview_answers" value={form.steps[selectedStepIndex].input_artifact_keys} onChange={(event) => updateStep(selectedStepIndex, { input_artifact_keys: event.target.value })} /><span className="field-hint">Optional. Leave blank to use all relevant prior artifacts.</span></label><span className="field-hint">Semantic search is prefetched by the backend, avoiding an extra model tool-planning turn.</span></> : null}</section> : null}
         <div className="form-actions"><button type="button" className="btn" onClick={() => { setEditingId(null); setShowWorkflowForm(false); setForm(blank); }}>Cancel</button><button className="btn btn-primary" disabled={saving}>{saving ? "Saving..." : "Save workflow"}</button></div>
       </form>}</section>
     </main> : null}
