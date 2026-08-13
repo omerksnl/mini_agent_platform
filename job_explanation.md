@@ -1,156 +1,143 @@
-# Common Bonus Criteria
+# Engineering Role Criteria
 
-- Role-related internship or professional experience
-- Relevant personal, academic, or open-source projects
-- Measurable project outcomes and impact
-- Active GitHub portfolio with relevant project evidence
-- Technical certifications relevant to the role
-- Hackathon, engineering competition, or research experience
-- Cross-functional teamwork experience
-- Clear technical documentation
-- English proficiency
-- Continuous learning activities
-- Mentoring, knowledge sharing, or technical community participation
-- Ownership of a project from planning through delivery
+Use CV and interview content only as evidence. Missing evidence is unverified, not proof of inability. Prefer demonstrated implementation, decisions, validation, and measurable outcomes over technology-name matching. High-priority criteria are core job outcomes; mid-priority criteria improve delivery; low-priority criteria are foundations.
 
-> These criteria provide bonus points for every role. Missing criteria must not be treated as automatic rejection criteria.
+## Common Bonus
+
+- Owned a relevant project from definition through delivery
+- Produced measurable technical or business impact
+- Contributed through review, documentation, or shared engineering practices
+- Relevant professional, research, open-source, or competition experience
+- Clearly communicated technical trade-offs
+
+Missing bonus evidence does not reduce the score.
 
 # Backend Software Engineer
 
-You will develop and maintain the company’s backend services and REST APIs, design database schemas and migrations, implement authentication and tenant isolation, write automated tests, investigate production issues, and collaborate with frontend and infrastructure teams to deliver reliable features.
+Build and operate multi-tenant backend services, APIs, relational data, authentication, asynchronous jobs, tests, and production diagnostics.
 
 ## High Priority
 
-- Designed and implemented a production-style REST API with authentication, authorization, validation, and structured error handling
-- Designed a relational database schema and implemented migrations, constraints, indexes, and transactional operations
-- Built an asynchronous or background-processing workflow using queues, workers, or scheduled jobs
-- Implemented automated unit and integration tests for API, database, and tenant-isolation behavior
-- Diagnosed and improved backend reliability, security, or performance using measurable evidence
+- Delivered a validated and authorized API with predictable errors
+- Designed relational data using migrations, constraints, indexes, transactions, and tenant isolation
+- Built reliable queued or asynchronous work with idempotency, retries, and failure recovery
+- Tested APIs, persistence, authorization, and tenant boundaries
+- Diagnosed and improved a measured reliability, security, or performance issue
 
 ## Mid Priority
 
-- FastAPI, Django, Flask, Spring Boot, ASP.NET Core, or a comparable backend framework used in a substantial project
-- PostgreSQL or another relational database used through an ORM and direct SQL
-- Redis used for caching, rate limiting, sessions, or job coordination
-- Dockerized backend service with environment-based configuration
-- API documentation, logging, monitoring, CI/CD, message queues, or microservice integration
+- Implemented caching, rate limiting, sessions, or coordination with safe invalidation
+- Added structured logs, health checks, metrics, tracing, or alerts
+- Handled compatibility, pagination, job status, or integration boundaries
+- Shipped a containerized service through CI/CD with configuration and secret handling
 
 ## Low Priority
 
-- Python, Java, C#, JavaScript, TypeScript, Go, or another backend language
-- SQL fundamentals
-- HTTP and REST fundamentals
-- Git and collaborative version control
-- Basic Linux and command-line usage
+- Backend framework experience
+- SQL and ORM usage
+- HTTP, REST, authentication, and authorization fundamentals
+- Git, Linux, and collaborative development
 
 # Machine Learning Engineer
 
-You will prepare company datasets, develop and compare machine-learning models, build reproducible training and evaluation pipelines, document model performance and limitations, integrate selected models into company applications, and monitor their behavior with the software and domain teams.
+Build reproducible ML solutions with trustworthy data, controlled evaluation, deployable inference, and monitored behavior.
 
 ## High Priority
 
-- Designed, trained, and evaluated a CNN, transformer, or another role-relevant model architecture on a real dataset
-- Compared models or experiments using appropriate metrics, baselines, validation methods, and documented results
-- Built a complete data preprocessing, augmentation, training, evaluation, and inference pipeline
-- Addressed class imbalance, overfitting, data leakage, explainability, or other model-quality risks with explicit methods
-- Deployed or integrated a trained model into an API, application, batch workflow, or reproducible inference system
+- Defined an ML problem, prediction target, success criteria, and trained a relevant model
+- Compared models against a meaningful baseline using appropriate validation and metrics
+- Built a reproducible pipeline for splits, preprocessing, configuration, and evaluation
+- Identified and mitigated a material risk such as leakage, imbalance, overfitting, drift, calibration, fairness, or label quality
+- Integrated and verified a trained model outside a notebook
 
 ## Mid Priority
 
-- PyTorch, TensorFlow, Keras, Scikit-learn, or a comparable framework used in a substantial project
-- Computer vision, NLP, time-series, recommendation, or tabular machine-learning project relevant to the task
-- Experiment tracking, hyperparameter tuning, model versioning, or reproducible training
-- SQL and structured data preparation for model development
-- Docker, cloud services, GPU environments, or MLOps tools used for model execution or deployment
+- Tracked experiments, parameters, datasets, artifacts, and model versions
+- Evaluated inference latency, throughput, resources, robustness, or error patterns
+- Defined monitoring, drift, retraining, and rollback signals
+- Validated requirements and outputs with domain or software teams
 
 ## Low Priority
 
-- Python
-- Machine-learning fundamentals
-- Basic statistics and probability
-- NumPy, pandas, and data visualization
-- Git and basic software-development practices
+- ML framework experience
+- Python, NumPy, pandas, SQL, and visualization
+- Statistics, metrics, and probability fundamentals
+- Git, testing, containers, and software engineering
 
 # Data Engineer
 
-You will collect data from company databases, files, and APIs, build scheduled ETL/ELT pipelines, design trustworthy analytical datasets, implement data-quality and recovery checks, optimize storage and queries, and supply documented data to analytics and machine-learning teams.
+Build dependable, observable, and recoverable data models and pipelines for analytics and ML consumers.
 
 ## High Priority
 
-- Designed and implemented an end-to-end ETL or ELT pipeline with explicit sources, transformations, and destinations
-- Designed analytical or operational data models with documented relationships, constraints, and business rules
-- Implemented data-quality checks, lineage, idempotency, retry behavior, or pipeline observability
-- Processed high-volume, streaming, or distributed data using Spark, Kafka, or comparable technologies
-- Built or optimized a data warehouse, lakehouse, or large-scale query workflow with measurable outcomes
+- Delivered an end-to-end batch or streaming pipeline with defined sources, transformations, and destinations
+- Designed business-focused data models with keys, history, schema evolution, and clear semantics
+- Implemented quality checks, idempotency, retries, backfills, lineage, and visible failures
+- Built correct incremental or partitioned processing appropriate to data volume
+- Optimized a warehouse, lakehouse, or distributed workload using measured outcomes
 
 ## Mid Priority
 
-- Apache Airflow, Dagster, Prefect, dbt, Spark, Kafka, or a comparable data-engineering tool used in a project
-- PostgreSQL, a cloud warehouse, or another database used for non-trivial data transformation
-- Batch processing, scheduling, schema evolution, partitioning, or incremental loading
-- Dockerized data pipeline or reproducible data-processing environment
-- Cloud storage, cloud data services, dashboards, or downstream analytics integration
+- Used orchestration or transformation tooling in a substantial workflow
+- Managed producer-consumer contracts, late data, duplicates, or schema changes
+- Monitored freshness, volume, quality, lineage, or runtime
+- Deployed reproducible data environments through containers, CI/CD, IaC, or cloud services
 
 ## Low Priority
 
-- Python
-- SQL
-- Basic relational data modeling
-- CSV, JSON, API, and file-processing fundamentals
-- Git and basic Linux usage
+- SQL and relational modeling
+- Python or another data-processing language
+- APIs, JSON, CSV, Parquet, and database sources
+- Git, Linux, testing, and documentation
 
 # DevOps Engineer
 
-You will maintain the company’s development and production environments, containerize services, automate build-test-deployment pipelines, provision infrastructure, configure networking and secrets, monitor logs and system health, respond to incidents, and improve deployment reliability and recovery.
+Automate safe delivery and infrastructure while making production services secure, observable, scalable, and recoverable.
 
 ## High Priority
 
-- Designed and maintained a complete CI/CD pipeline with automated build, test, security, and deployment stages
-- Provisioned reproducible infrastructure using Terraform, Ansible, Pulumi, or another Infrastructure-as-Code tool
-- Deployed and operated containerized services using Kubernetes with health checks, scaling, configuration, and secrets management
-- Built monitoring, logging, alerting, and incident-diagnosis workflows using explicit operational signals
-- Improved deployment reliability, recovery, security, availability, or infrastructure cost with measurable evidence
+- Built CI/CD covering build, test, security, release, deployment, and controlled failures
+- Provisioned reproducible infrastructure as code with environments and safe changes
+- Operated containers with health checks, secrets, scaling, rollout, and rollback
+- Established monitoring, logging, alerting, and incident investigation
+- Measurably improved reliability, recovery, deployment safety, security, performance, or cost
 
 ## Mid Priority
 
-- Docker and Docker Compose used for a multi-service application
-- Cloud platforms such as AWS, Azure, or Google Cloud used in a deployed project
-- Linux server administration, networking, reverse proxies, TLS, DNS, or firewall configuration
-- GitHub Actions, GitLab CI, Jenkins, or another delivery-automation platform
-- Helm, GitOps, service mesh, secrets management, backup, or disaster-recovery practices
+- Configured DNS, TLS, proxies, ingress, load balancing, or firewalls
+- Implemented and tested backup, restore, or disaster recovery
+- Managed identities, permissions, secrets, or supply-chain security with least privilege
+- Automated recurring operations using scripts, configuration management, GitOps, or platform tooling
 
 ## Low Priority
 
-- Linux fundamentals
-- Bash or Python scripting
-- Git and branching workflows
-- Basic networking concepts
-- Basic containers and deployment concepts
+- Linux and shell scripting
+- Docker and containers
+- Networking and distributed systems
+- Git, CI, and infrastructure documentation
 
 # Embedded Systems Engineer
 
-You will develop and test firmware for the company’s hardware products, integrate sensors and communication interfaces, diagnose hardware-software faults, meet timing and resource constraints, maintain embedded build and test processes, and collaborate with electronics engineers through prototype and product validation.
+Develop and validate firmware that reliably controls hardware under timing, memory, power, and safety constraints.
 
 ## High Priority
 
-- Developed firmware for a microcontroller using interrupts, timers, memory constraints, and hardware peripherals
-- Designed or implemented a real-time system using an RTOS, task scheduling, synchronization, and timing requirements
-- Integrated and debugged sensors or devices through UART, SPI, I2C, CAN, or another hardware communication protocol
-- Diagnosed hardware-software problems using oscilloscopes, logic analyzers, debuggers, or hardware test equipment
-- Delivered an embedded product or substantial prototype with documented reliability, power, timing, or performance results
+- Developed microcontroller firmware using interrupts, timers, peripherals, memory constraints, and error handling
+- Designed concurrent or real-time behavior with timing, scheduling, synchronization, and failure requirements
+- Integrated and debugged hardware protocols using datasheets and measured signals
+- Diagnosed hardware-software faults with debuggers, analyzers, oscilloscopes, traces, or structured tests
+- Validated a prototype against measurable timing, reliability, power, memory, safety, or performance requirements
 
 ## Mid Priority
 
-- C or C++ used in a substantial embedded project
-- ARM, AVR, ESP32, STM32, Arduino, Raspberry Pi, or another embedded platform
-- Embedded Linux, device drivers, boot processes, or cross-compilation
-- Unit testing, hardware-in-the-loop testing, or automated firmware testing
-- PCB design, FPGA fundamentals, IoT protocols, wireless communication, or safety-oriented development
+- Built automated firmware, hardware-in-the-loop, simulation, or bench tests
+- Used embedded Linux, drivers, bootloaders, cross-compilation, or board-support packages
+- Implemented power management, watchdogs, recovery, updates, or persistent storage
+- Collaborated on hardware interfaces, PCB bring-up, wireless/IoT, or safety constraints
 
 ## Low Priority
 
-- C or C++ fundamentals
-- Digital electronics fundamentals
-- Basic microcontroller knowledge
-- Git and debugging fundamentals
-- Basic data structures and computer architecture
+- C or C++
+- Microcontrollers and digital electronics
+- Data structures, memory layout, and computer architecture
+- Git, build systems, debugging, and documentation
