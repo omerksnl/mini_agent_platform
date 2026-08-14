@@ -135,6 +135,30 @@ class CollectionService:
     ) -> str:
         """Return compact, source-labelled semantic-search context for one LLM call."""
         results = self.search(tenant_id, collection_ids, query, limit)
+        # A relevant heading can land at the end of one chunk while its criteria
+        # continue in the next chunk. Expand each semantic hit with its immediate
+        # neighbours so the model receives complete local context instead of a
+        # misleading fragment.
+        expanded: list[tuple[DocumentChunk, float]] = []
+        seen: set[UUID] = set()
+        for hit, score in results:
+            positions = [position for position in (hit.position - 1, hit.position, hit.position + 1) if position >= 0]
+            neighbours = list(self.db.scalars(
+                select(DocumentChunk)
+                .where(
+                    DocumentChunk.tenant_id == tenant_id,
+                    DocumentChunk.document_id == hit.document_id,
+                    DocumentChunk.position.in_(positions),
+                )
+                .order_by(DocumentChunk.position)
+            ).all())
+            for neighbour in neighbours:
+                if neighbour.id in seen:
+                    continue
+                seen.add(neighbour.id)
+                distance = abs(neighbour.position - hit.position)
+                expanded.append((neighbour, max(0.0, score - (0.001 * distance))))
+        results = expanded
         blocks: list[str] = []
         total = 0
         for chunk, score in results:

@@ -1,4 +1,6 @@
 import json
+import re
+import unicodedata
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -9,6 +11,8 @@ from app.core.services.llm_service import LLMClient, LLMResult
 from app.core.services.attachment_service import AttachmentError, AttachmentService
 from app.core.services.workflow_service import WorkflowError, WorkflowService
 from app.core.services.collection_service import CollectionService
+from app.core.services.generated_file_service import GeneratedFileService
+from app.core.services.report_pdf_service import ReportPdfService
 from app.core.tools import SYSTEM_TOOL_MAP
 from app.core.tools.http_tools import build_http_tool
 from app.core.observability import bind_trace_context
@@ -254,12 +258,17 @@ class WorkflowExecutionService:
                 step_run.api_cost_usd = cost
                 step_run.completed_at = datetime.now(timezone.utc)
                 run.total_api_cost_usd += cost
+                artifact_type = (
+                    "agent_output" if current.step_type == "agent"
+                    else "generated_file" if current.step_type == "report"
+                    else "tool_output"
+                )
                 self._store_artifact(
                     run,
                     step_run,
                     current.step_key,
                     current.name,
-                    "agent_output" if current.step_type == "agent" else "tool_output",
+                    artifact_type,
                     output,
                 )
                 state = dict(run.output_data)
@@ -326,10 +335,16 @@ class WorkflowExecutionService:
                 )
             elif collection_mode == "search" and step.agent.collections:
                 search_query_parts = [task_instructions, step.name]
-                for artifact in reversed(artifacts):
+                # Human waits often capture different pieces of routing context
+                # (for example, a selected role and later interview answers).
+                # Include all of them so semantic retrieval is not biased toward
+                # only the most recent response.
+                for artifact in artifacts:
                     if artifact["type"] == "human_input":
-                        search_query_parts.append(json.dumps(artifact["data"], ensure_ascii=False)[:2_000])
-                        break
+                        search_query_parts.append(
+                            f"{artifact['name']}: "
+                            + json.dumps(artifact["data"], ensure_ascii=False)[:2_000]
+                        )
                 full_collection_context = CollectionService(self.db).search_text(
                     step.agent.tenant_id,
                     [collection.id for collection in step.agent.collections],
@@ -385,7 +400,72 @@ class WorkflowExecutionService:
             if tool is None:
                 raise WorkflowError(f"Unsupported workflow system tool: {step.system_tool_name}")
             return {"result": tool.invoke(arguments)}, 0.0
+        if step.step_type == "report":
+            input_key = str(step.config.get("input_artifact_key", ""))
+            artifact = next(
+                (item for item in state.get("artifacts", []) if item.artifact_key == input_key),
+                None,
+            )
+            step_outputs = state.get("steps", {})
+            fallback_data = step_outputs.get(input_key) if isinstance(step_outputs, dict) else None
+            if artifact is None and not isinstance(fallback_data, dict):
+                raise WorkflowError(f"Report input artifact not found: {input_key}")
+            source_data = artifact.data if artifact is not None else fallback_data
+            content = self._artifact_markdown(source_data)
+            template_id = str(step.config.get("template_id", "blank_markdown"))
+            configured_filename = str(step.config.get("filename", "candidate-assessment.pdf"))
+            filename = self._report_filename(configured_filename, content)
+            title = str(step.config.get("title", "")).strip() or None
+            pdf = ReportPdfService().render(content, template_id, title)
+            generated = GeneratedFileService(self.db).create_pdf(
+                tenant_id=step.workflow.tenant_id,
+                agent_id=None,
+                filename=filename,
+                template_id=template_id,
+                data=pdf,
+            )
+            return {
+                "generated_file_id": str(generated.id),
+                "filename": generated.original_name,
+                "content_type": generated.content_type,
+                "template_id": generated.template_id,
+                "size_bytes": generated.size_bytes,
+                "download_url": f"/api/generated-files/{generated.id}/download",
+            }, 0.0
         raise WorkflowError(f"Workflow step {step.step_key} has no executable target")
+
+    @staticmethod
+    def _artifact_markdown(data: dict) -> str:
+        for key in ("content", "result", "markdown"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+
+    @classmethod
+    def _report_filename(cls, configured_filename: str, content: str) -> str:
+        """Resolve the safe default filename from candidate evidence, not model-controlled paths."""
+        if configured_filename not in {"candidate-assessment.pdf", "{candidate_name}-assessment.pdf"}:
+            return configured_filename
+        candidate_name = cls._candidate_name(content)
+        if not candidate_name:
+            return "candidate-assessment.pdf"
+        translated = candidate_name.translate(str.maketrans({"ı": "i", "İ": "I", "ğ": "g", "Ğ": "G"}))
+        ascii_name = unicodedata.normalize("NFKD", translated).encode("ascii", "ignore").decode("ascii")
+        slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.casefold()).strip("-")
+        return f"{slug}-assessment.pdf" if slug else "candidate-assessment.pdf"
+
+    @staticmethod
+    def _candidate_name(content: str) -> str | None:
+        patterns = (
+            r"(?im)^\s*(?:[-*]\s*)?\*{0,2}(?:candidate|candidate name|full name|aday|aday adı)\*{0,2}\s*:\s*\*{0,2}([^\n|]+?)\*{0,2}\s*$",
+            r'(?i)"(?:full_name|candidate_name)"\s*:\s*"([^"]+)"',
+        )
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if match:
+                return match.group(1).strip().strip("*")
+        return None
 
     def _store_artifact(
         self,

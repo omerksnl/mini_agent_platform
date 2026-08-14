@@ -117,7 +117,7 @@ export type Attachment = {
 export type CollectionDocument = { id: string; original_name: string; content_type: string; size_bytes: number; chunk_count: number; created_at: string };
 export type Collection = { id: string; tenant_id: string; name: string; description: string; documents: CollectionDocument[]; created_at: string; updated_at: string };
 
-export type WorkflowStepType = "agent" | "http_tool" | "system_tool" | "human_wait";
+export type WorkflowStepType = "agent" | "http_tool" | "system_tool" | "human_wait" | "report";
 export type WorkflowRouteCondition = "success" | "failure" | "input_available" | "always";
 export type WorkflowStepInput = {
   step_key: string;
@@ -161,7 +161,7 @@ export type WorkflowStepRun = {
 };
 export type WorkflowArtifact = {
   id: string; step_run_id: string | null; sequence: number; artifact_key: string; name: string;
-  artifact_type: "workflow_input" | "agent_output" | "human_input" | "tool_output";
+  artifact_type: "workflow_input" | "agent_output" | "human_input" | "tool_output" | "generated_file";
   data: Record<string, unknown>; created_at: string;
 };
 export type WorkflowRun = {

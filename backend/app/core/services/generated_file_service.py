@@ -24,7 +24,7 @@ class GeneratedFileService:
     def create_pdf(
         self,
         tenant_id: UUID,
-        agent_id: UUID,
+        agent_id: UUID | None,
         filename: str,
         template_id: str,
         data: bytes,

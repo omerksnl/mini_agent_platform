@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-StepType = Literal["agent", "http_tool", "system_tool", "human_wait"]
+StepType = Literal["agent", "http_tool", "system_tool", "human_wait", "report"]
 RouteCondition = Literal["success", "failure", "input_available", "always"]
 
 
@@ -30,9 +30,23 @@ class WorkflowStepInput(BaseModel):
             "http_tool": self.http_tool_id is not None and target_count == 1,
             "system_tool": self.system_tool_name is not None and target_count == 1,
             "human_wait": target_count == 0,
+            "report": target_count == 0,
         }[self.step_type]
         if not expected:
             raise ValueError(f"Invalid target fields for {self.step_type} step")
+        if self.step_type == "report":
+            input_key = self.config.get("input_artifact_key")
+            template_id = self.config.get("template_id")
+            filename = self.config.get("filename")
+            title = self.config.get("title")
+            if not isinstance(input_key, str) or not input_key or len(input_key) > 64:
+                raise ValueError("Report input_artifact_key is required")
+            if template_id not in {"blank_markdown", "two_column"}:
+                raise ValueError("Report template_id must be blank_markdown or two_column")
+            if not isinstance(filename, str) or not filename.strip() or len(filename) > 120:
+                raise ValueError("Report filename is required")
+            if title is not None and (not isinstance(title, str) or len(title) > 255):
+                raise ValueError("Report title must be text up to 255 characters")
         if self.step_type == "agent":
             task_instructions = self.config.get("task_instructions", "")
             use_collections = self.config.get("use_collections", True)
@@ -171,7 +185,7 @@ class WorkflowArtifactResponse(BaseModel):
     sequence: int
     artifact_key: str
     name: str
-    artifact_type: Literal["workflow_input", "agent_output", "human_input", "tool_output"]
+    artifact_type: Literal["workflow_input", "agent_output", "human_input", "tool_output", "generated_file"]
     data: dict
     created_at: datetime
 

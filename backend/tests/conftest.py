@@ -1,11 +1,12 @@
 import os
 from collections.abc import Generator
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-only-used-by-pytest")
 os.environ.setdefault("REDIS_URL", "")
@@ -17,23 +18,29 @@ from app.main import app  # noqa: E402
 
 @pytest.fixture
 def db_session_factory() -> Generator[sessionmaker[Session], None, None]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    testing_session = sessionmaker(
-        bind=engine,
-        autocommit=False,
-        autoflush=False,
-        class_=Session,
-    )
-    Base.metadata.create_all(engine)
+    # Workflow endpoints execute in a background thread while tests poll from
+    # another request thread. A StaticPool-backed in-memory SQLite database
+    # shares one connection across those threads and corrupts concurrent ORM
+    # result reads. Give every test a small file-backed database so each thread
+    # receives an independent connection to the same isolated database.
+    with TemporaryDirectory(prefix="mini-agent-test-", dir=Path(__file__).parent) as directory:
+        database_path = Path(directory) / "test.db"
+        engine = create_engine(
+            f"sqlite+pysqlite:///{database_path.as_posix()}",
+            connect_args={"check_same_thread": False},
+        )
+        testing_session = sessionmaker(
+            bind=engine,
+            autocommit=False,
+            autoflush=False,
+            class_=Session,
+        )
+        Base.metadata.create_all(engine)
 
-    yield testing_session
+        yield testing_session
 
-    Base.metadata.drop_all(engine)
-    engine.dispose()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
 
 
 @pytest.fixture

@@ -277,10 +277,18 @@ class ReportPdfService:
             spaceAfter=0,
         )
         content = flowables or [Paragraph("No information provided.", styles["Body"])]
+        # Keep each Markdown block in its own table row. ReportLab cannot split a
+        # single cell whose nested flowables are taller than a frame, which made
+        # long assessment sections fail instead of continuing in the next
+        # column/page.
+        rows = [[Paragraph(self._inline(title), heading_style)]]
+        rows.extend([[flowable] for flowable in content])
         box = Table(
-            [[Paragraph(self._inline(title), heading_style)], [content]],
+            rows,
             colWidths=[available_width],
             hAlign="LEFT",
+            repeatRows=1,
+            splitByRow=1,
         )
         box.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), background),
@@ -290,8 +298,8 @@ class ReportPdfService:
             ("RIGHTPADDING", (0, 0), (-1, -1), 8),
             ("TOPPADDING", (0, 0), (-1, 0), 7),
             ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-            ("TOPPADDING", (0, 1), (-1, 1), 7),
-            ("BOTTOMPADDING", (0, 1), (-1, 1), 4),
+            ("TOPPADDING", (0, 1), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         return box
@@ -299,12 +307,23 @@ class ReportPdfService:
     @staticmethod
     def _section_palette(title: str) -> tuple[colors.Color, colors.Color] | None:
         normalized = re.sub(r"[^a-z]+", " ", title.casefold()).strip()
+        if normalized in {"overall score", "score", "assessment score"}:
+            return colors.HexColor("#2F5D9B"), colors.HexColor("#EAF1FB")
         if normalized in {"strengths", "pros", "key strengths"}:
             return colors.HexColor("#2E7D4F"), colors.HexColor("#EAF6EF")
-        if normalized in {"risks", "cons", "limitations", "risk factors"}:
+        if normalized in {"weaknesses", "weakness", "risks", "cons", "limitations", "risk factors"}:
             return colors.HexColor("#B23A3A"), colors.HexColor("#FBEDED")
-        if normalized in {"development areas", "development area", "growth areas"}:
+        if normalized in {
+            "inconsistencies",
+            "inconsistency",
+            "cv interview inconsistencies",
+            "development areas",
+            "development area",
+            "growth areas",
+        }:
             return colors.HexColor("#B36B00"), colors.HexColor("#FFF4DD")
+        if normalized in {"overall opinion", "overall assessment"}:
+            return colors.HexColor("#5B4B8A"), colors.HexColor("#F1EEFA")
         return None
 
     def _table(

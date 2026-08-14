@@ -562,6 +562,10 @@ label {
 .compact-flow-segment { width: min(240px, 100%); display: grid; justify-items: center; }
 .compact-graph-node { position: relative; width: 100%; min-height: 74px; display: grid; place-content: center; gap: 4px; padding: 12px 38px 12px 34px; border: 1px solid var(--line); border-top: 3px solid var(--primary); border-radius: 9px; background: var(--box); text-align: center; box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
 .compact-graph-node.human { border-top-color: #d6973e; }
+.compact-graph-node.report, .palette-node.report { border-top-color: #4f7cac; }
+.workflow-generated-file { display: grid; gap: 8px; padding: 14px; }
+.workflow-generated-file p { margin: 0; }
+.workflow-generated-file .btn { justify-self: start; }
 .compact-graph-node > strong { color: var(--primary); font-size: 0.8rem; }
 .compact-graph-node > small { color: var(--muted); font-size: 0.62rem; }
 .compact-graph-node input { padding: 6px 8px; font-size: 0.65rem; }

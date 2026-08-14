@@ -64,6 +64,31 @@ def test_registered_templates_render_readable_pdfs() -> None:
         assert "Strengths" in text
 
 
+def test_two_column_template_splits_long_colored_sections() -> None:
+    long_markdown = "# Final Candidate Assessment\n\n## Strengths\n\n" + "\n\n".join(
+        f"Evidence item {index}: " + ("role-specific verified evidence " * 30)
+        for index in range(1, 18)
+    )
+
+    data = ReportPdfService().render(long_markdown, "two_column")
+
+    assert data.startswith(b"%PDF-")
+    reader = PdfReader(__import__("io").BytesIO(data))
+    assert len(reader.pages) > 1
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    assert "Evidence item 17" in text
+
+
+def test_assessment_sections_have_dedicated_palettes() -> None:
+    service = ReportPdfService()
+
+    assert service._section_palette("Overall Score") is not None
+    assert service._section_palette("Strengths") is not None
+    assert service._section_palette("Weaknesses") is not None
+    assert service._section_palette("Inconsistencies") is not None
+    assert service._section_palette("Overall Opinion") is not None
+
+
 def test_text_to_pdf_creates_tenant_scoped_generated_file(
     db_session_factory: sessionmaker[Session], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

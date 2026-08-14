@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_llm_client
 from app.core.services.llm_service import LLMResult
+from app.core.services.collection_service import CollectionService
+from app.core.services.workflow_execution_service import WorkflowExecutionService
 from app.main import app
 
 
@@ -165,6 +167,62 @@ def test_agent_receives_all_prior_workflow_artifacts(client: TestClient) -> None
     assert FakeWorkflowLLM.collection_flags == [False, False]
 
 
+def test_collection_prefetch_query_includes_every_human_wait(
+    client: TestClient, monkeypatch
+) -> None:
+    FakeWorkflowLLM.messages.clear()
+    captured_queries: list[str] = []
+    monkeypatch.setattr(
+        CollectionService,
+        "search_text",
+        lambda self, tenant_id, collection_ids, query, **kwargs: captured_queries.append(query) or "Complete selected-role criteria",
+    )
+    app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
+    token = register(client, "all-human-inputs@example.com", "All Human Inputs")
+    collection = client.post(
+        "/api/collections",
+        headers=headers(token),
+        json={"name": "Role criteria", "description": "Engineering roles"},
+    ).json()
+    agent = client.post(
+        "/api/agents",
+        headers=headers(token),
+        json={"name": "review_ai", "collection_ids": [collection["id"]]},
+    ).json()
+    workflow = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Review context",
+        "steps": [
+            {"step_key": "selected_role", "name": "Selected role", "step_type": "human_wait", "position": 0, "config": {"required_input": "Select role"}},
+            {"step_key": "interview", "name": "Interview", "step_type": "human_wait", "position": 1, "config": {"required_input": "Interview answers"}},
+            {"step_key": "review", "name": "Review", "step_type": "agent", "position": 2, "agent_id": agent["id"], "config": {"collection_mode": "search"}},
+        ],
+        "routes": [
+            {"source_step_key": "selected_role", "target_step_key": "interview", "condition": "input_available"},
+            {"source_step_key": "interview", "target_step_key": "review", "condition": "input_available"},
+        ],
+    }).json()
+
+    started = client.post(
+        f"/api/workflows/{workflow['id']}/runs",
+        headers=headers(token), json={"input_data": {"request": "Assess candidate"}},
+    ).json()
+    first_wait = wait_for_run(client, token, started["id"], {"waiting"})
+    resumed = client.post(
+        f"/api/workflows/runs/{first_wait['id']}/resume",
+        headers=headers(token), json={"input_data": {"response": "Machine Learning Engineer"}},
+    ).json()
+    second_wait = wait_for_run(client, token, resumed["id"], {"waiting"})
+    client.post(
+        f"/api/workflows/runs/{second_wait['id']}/resume",
+        headers=headers(token), json={"input_data": {"response": "Five concise interview answers"}},
+    )
+    wait_for_run(client, token, second_wait["id"], {"completed", "failed"})
+
+    assert len(captured_queries) == 1
+    assert "Machine Learning Engineer" in captured_queries[0]
+    assert "Five concise interview answers" in captured_queries[0]
+
+
 def test_workflow_pdf_is_attached_to_run_and_only_first_pdf_agent(client: TestClient) -> None:
     FakeWorkflowLLM.messages.clear()
     FakeWorkflowLLM.attachment_counts.clear()
@@ -226,6 +284,53 @@ def test_failed_step_is_persisted(client: TestClient) -> None:
     assert run["error"]
 
 
+def test_report_step_renders_prior_artifact_without_llm_cost(client: TestClient) -> None:
+    assert WorkflowExecutionService._report_filename(
+        "{candidate_name}-assessment.pdf",
+        "# Final Candidate Assessment\n\n- **Candidate:** Ömer Kaan Şanal",
+    ) == "omer-kaan-sanal-assessment.pdf"
+    app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
+    token = register(client, "report-run@example.com", "Report Run")
+    agent = create_agent(client, token, "review_ai")
+    workflow_response = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Assessment with PDF",
+        "steps": [
+            {"step_key": "final_assessment", "name": "Final assessment", "step_type": "agent", "position": 0, "agent_id": agent["id"]},
+            {
+                "step_key": "pdf_report", "name": "PDF report", "step_type": "report", "position": 1,
+                "config": {
+                    "input_artifact_key": "final_assessment",
+                    "template_id": "two_column",
+                    "filename": "candidate-assessment.pdf",
+                    "title": "Final Candidate Assessment",
+                },
+            },
+        ],
+        "routes": [{"source_step_key": "final_assessment", "target_step_key": "pdf_report", "condition": "success"}],
+    })
+    assert workflow_response.status_code == 201, workflow_response.text
+
+    started = client.post(
+        f"/api/workflows/{workflow_response.json()['id']}/runs",
+        headers=headers(token), json={"input_data": {"request": "Assess candidate"}},
+    )
+    assert started.status_code == 201, started.text
+    completed = wait_for_run(client, token, started.json()["id"], {"completed", "failed"})
+    assert completed["status"] == "completed", completed.get("error")
+    assert completed["total_api_cost_usd"] == 0.0125
+    assert completed["step_runs"][1]["api_cost_usd"] == 0
+    report = completed["artifacts"][-1]
+    assert report["artifact_type"] == "generated_file"
+    assert report["data"]["filename"] == "candidate-assessment.pdf"
+    assert report["data"]["template_id"] == "two_column"
+    downloaded = client.get(report["data"]["download_url"], headers=headers(token))
+    assert downloaded.status_code == 200
+    assert downloaded.content.startswith(b"%PDF-")
+
+    other = register(client, "report-other@example.com", "Report Other")
+    assert client.get(report["data"]["download_url"], headers=headers(other)).status_code == 404
+
+
 def test_workflow_runs_are_tenant_isolated(client: TestClient) -> None:
     app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
     owner = register(client, "run-owner@example.com", "Run Owner")
@@ -243,3 +348,6 @@ def test_workflow_runs_are_tenant_isolated(client: TestClient) -> None:
         headers=headers(other), json={"input_data": {"approved": True}},
     ).status_code == 404
     assert client.get(f"/api/workflows/{workflow['id']}/runs", headers=headers(other)).status_code == 404
+    # Let the owner's background worker reach its human-wait boundary before
+    # the per-test SQLite database is disposed on Windows.
+    wait_for_run(client, owner, run["id"], {"waiting", "completed", "failed"})

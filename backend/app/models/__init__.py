@@ -232,7 +232,7 @@ class WorkflowStep(Base):
         UniqueConstraint("workflow_id", "step_key", name="uq_workflow_steps_key"),
         UniqueConstraint("workflow_id", "position", name="uq_workflow_steps_position"),
         CheckConstraint(
-            "step_type IN ('agent', 'http_tool', 'system_tool', 'human_wait')",
+            "step_type IN ('agent', 'http_tool', 'system_tool', 'human_wait', 'report')",
             name="ck_workflow_steps_type",
         ),
     )
@@ -378,7 +378,7 @@ class WorkflowArtifact(Base):
         UniqueConstraint("workflow_run_id", "artifact_key", name="uq_workflow_artifacts_run_key"),
         UniqueConstraint("workflow_run_id", "sequence", name="uq_workflow_artifacts_run_sequence"),
         CheckConstraint(
-            "artifact_type IN ('workflow_input', 'agent_output', 'human_input', 'tool_output')",
+            "artifact_type IN ('workflow_input', 'agent_output', 'human_input', 'tool_output', 'generated_file')",
             name="ck_workflow_artifacts_type",
         ),
     )
@@ -523,8 +523,8 @@ class GeneratedFile(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    agent_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True
     )
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False, default="application/pdf")
@@ -534,7 +534,7 @@ class GeneratedFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tenant: Mapped[Tenant] = relationship(back_populates="generated_files")
-    agent: Mapped[Agent] = relationship()
+    agent: Mapped[Agent | None] = relationship()
 
 
 class Collection(Base):
