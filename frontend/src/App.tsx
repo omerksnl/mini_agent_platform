@@ -10,8 +10,10 @@ import { ToolsPage } from "./pages/ToolsPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
+import { useGlobalInputUndo } from "./useGlobalInputUndo";
 
 export default function App() {
+  useGlobalInputUndo();
   return (
     <AuthProvider>
       <BrowserRouter>
