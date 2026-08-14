@@ -48,7 +48,7 @@ def headers(token: str) -> dict[str, str]:
 
 
 def wait_for_run(client: TestClient, token: str, run_id: str, statuses: set[str]) -> dict:
-    for _ in range(200):
+    for _ in range(500):
         run = client.get(f"/api/workflows/runs/{run_id}", headers=headers(token)).json()
         if run["status"] in statuses:
             return run

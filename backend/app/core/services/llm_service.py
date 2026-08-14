@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import json
 import re
 from typing import Any, Protocol
 
@@ -21,6 +22,7 @@ from app.models import Agent, HttpTool
 from app.models import Attachment
 from sqlalchemy.orm import Session
 from app.core.tools.pdf_tools import build_pdf_to_text_tool
+from app.core.tools.text_to_pdf_tools import build_text_to_pdf_tool
 from app.core.tools.collection_tools import build_collection_search_tool
 from app.core.tools.supervisor_tools import build_delegation_tools
 from app.core.candidate_profile import normalize_candidate_profile_json
@@ -166,6 +168,10 @@ class OpenRouterLLMClient:
             if db is None:
                 raise LLMError("PDF tool database context is unavailable")
             selected_system_tools.append(build_pdf_to_text_tool(db, attachments))
+        if "text_to_pdf" in agent.system_tools:
+            if db is None:
+                raise LLMError("Text-to-PDF tool database context is unavailable")
+            selected_system_tools.append(build_text_to_pdf_tool(db, agent))
         selected_tools = [*selected_system_tools, *build_http_tools(http_tools or [])]
         used_agents: list[str] = []
         delegated_cost_usd = 0.0
@@ -284,7 +290,7 @@ class OpenRouterLLMClient:
             cost_callback,
             tracing_callbacks,
             tracing_metadata,
-        ) if not skip_response_validation and not attachments and (len(routing.request_parts) > 1 or required_tool_names) else ValidationDecision(complete=True)
+        ) if not skip_response_validation and not attachments and "text_to_pdf" not in used_tools and (len(routing.request_parts) > 1 or required_tool_names) else ValidationDecision(complete=True)
         profile_invalid = self._candidate_profile_invalid(selected_skills, content)
 
         if missing_tools or not validation.complete or profile_invalid:
@@ -329,6 +335,7 @@ class OpenRouterLLMClient:
                 )
 
         content = self._normalize_datetime_response(content, result_messages)
+        content = self._append_generated_file_links(content, result_messages)
         if any(skill.name == "cv_extraction" for skill in selected_skills):
             content = normalize_candidate_profile_json(content)
         return LLMResult(
@@ -593,6 +600,26 @@ class OpenRouterLLMClient:
             if isinstance(message, ToolMessage) and message.name and message.name not in names:
                 names.append(message.name)
         return names
+
+    @staticmethod
+    def _append_generated_file_links(content: str, messages: list[Any]) -> str:
+        links: list[tuple[str, str]] = []
+        for message in messages:
+            if not isinstance(message, ToolMessage) or message.name != "text_to_pdf":
+                continue
+            try:
+                payload = json.loads(str(message.content))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            url = payload.get("download_url")
+            filename = payload.get("filename")
+            if isinstance(url, str) and isinstance(filename, str) and (filename, url) not in links:
+                links.append((filename, url))
+        missing = [(name, url) for name, url in links if url not in content]
+        if not missing:
+            return content
+        block = "\n".join(f"- [{name}]({url})" for name, url in missing)
+        return f"{content.rstrip()}\n\nGenerated files:\n{block}"
 
     @staticmethod
     def _last_assistant_text(messages: list[Any]) -> str | None:

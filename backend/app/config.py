@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     attachment_max_bytes: int = 10_000_000
     pdf_max_pages: int = 50
     pdf_max_text_characters: int = 120_000
+    generated_file_max_bytes: int = 10_000_000
+    text_to_pdf_max_characters: int = 80_000
     embedding_model: str = "openai/text-embedding-3-small"
     embedding_dimensions: int = 1536
     collection_chunk_characters: int = 1600

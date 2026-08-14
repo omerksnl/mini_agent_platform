@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -30,6 +30,17 @@ export function ChatPage() {
   function setCurrentDraft(value: string) {
     if (!selected) return;
     setDrafts((current) => ({ ...current, [selected.id]: value }));
+  }
+
+  async function handleMarkdownLink(event: MouseEvent<HTMLAnchorElement>, href?: string) {
+    if (!href?.match(/^\/api\/generated-files\/[0-9a-f-]+\/download$/i)) return;
+    event.preventDefault();
+    const filename = event.currentTarget.textContent?.trim() || "document.pdf";
+    try {
+      await api.downloadGeneratedFile(href, filename);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Generated PDF could not be downloaded");
+    }
   }
 
   function scrollThreadToBottom() {
@@ -315,7 +326,14 @@ export function ChatPage() {
                       </div>
                       {message.role === "assistant" ? (
                         <div className="markdown-content">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children }) => (
+                                <a href={href} onClick={(event) => void handleMarkdownLink(event, href)}>{children}</a>
+                              ),
+                            }}
+                          >{message.content}</ReactMarkdown>
                         </div>
                       ) : (
                         <p>{message.content}</p>

@@ -9,7 +9,7 @@ from app.core.services.tool_service import ToolError, ToolService
 from app.core.services.skill_service import SkillError, SkillService
 from app.core.services.collection_service import CollectionError, CollectionService
 
-AVAILABLE_SYSTEM_TOOLS = {"calculator", "current_datetime", "pdf_to_text"}
+AVAILABLE_SYSTEM_TOOLS = {"calculator", "current_datetime", "pdf_to_text", "text_to_pdf"}
 
 
 class AgentError(Exception):

@@ -213,6 +213,27 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  async downloadGeneratedFile(path: string, filename: string) {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const response = await fetch(path, { headers });
+    if (!response.ok) throw new Error("Generated PDF could not be downloaded");
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const encodedName = disposition.match(/filename\*=utf-8''([^;]+)/i)?.[1];
+    const quotedName = disposition.match(/filename="([^"]+)"/i)?.[1];
+    const plainName = disposition.match(/filename=([^;]+)/i)?.[1]?.trim();
+    const responseFilename = encodedName
+      ? decodeURIComponent(encodedName)
+      : quotedName ?? plainName ?? filename;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = responseFilename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
   register(body: {
     email: string;
     password: string;

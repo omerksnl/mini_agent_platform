@@ -273,6 +273,7 @@ export function AgentsPage() {
                     { id: "calculator", description: "Safe arithmetic" },
                       { id: "current_datetime", description: "Current time by timezone" },
                       { id: "pdf_to_text", description: "Extract text from PDFs attached in chat" },
+                      { id: "text_to_pdf", description: "Create a PDF using a safe registered template" },
                   ].map((tool) => (
                     <label className="tool-option" key={tool.id}>
                       <input

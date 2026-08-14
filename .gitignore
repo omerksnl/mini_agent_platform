@@ -11,4 +11,5 @@ dist/
 # User-uploaded and temporary files
 backend/uploads/
 tmp/
+output/
 CV_Updated.tex

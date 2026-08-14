@@ -161,7 +161,11 @@ class ConversationService:
                     self.db,
                 )
             else:
-                if conversation.agent.collections or conversation.agent.agent_type == "supervisor":
+                if (
+                    conversation.agent.collections
+                    or conversation.agent.agent_type == "supervisor"
+                    or "text_to_pdf" in conversation.agent.system_tools
+                ):
                     llm_result = llm_client.complete(
                         conversation.agent,
                         llm_messages,

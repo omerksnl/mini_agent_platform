@@ -99,6 +99,12 @@ Built-in tools:
 - `calculator`
 - `current_datetime`
 - `pdf_to_text` (extracts selectable text only from a PDF attached to the current chat message)
+- `text_to_pdf` (renders Markdown with a registered safe template and returns an authenticated download)
+
+`text_to_pdf` currently exposes two developer-managed templates: `blank_markdown` for a clean
+single-column document and `two_column`, adapted from the LPPL-licensed Overleaf two-column CV
+layout. Agents may select only these registered identifiers; they cannot submit arbitrary HTML or
+LaTeX. Generated PDFs are tenant-scoped, size-limited, and stored separately from uploaded PDFs.
 
 ## CV extraction in chat
 

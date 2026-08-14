@@ -65,6 +65,7 @@ class Tenant(Base):
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="tenant")
     messages: Mapped[list["Message"]] = relationship(back_populates="tenant")
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="tenant")
+    generated_files: Mapped[list["GeneratedFile"]] = relationship(back_populates="tenant")
     collections: Mapped[list["Collection"]] = relationship(back_populates="tenant")
     workflows: Mapped[list["Workflow"]] = relationship(back_populates="tenant")
 
@@ -513,6 +514,27 @@ class Attachment(Base):
     tenant: Mapped[Tenant] = relationship(back_populates="attachments")
     message: Mapped[Message | None] = relationship(back_populates="attachments")
     workflow_run: Mapped[WorkflowRun | None] = relationship(back_populates="attachments")
+
+
+class GeneratedFile(Base):
+    __tablename__ = "generated_files"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False, default="application/pdf")
+    template_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    tenant: Mapped[Tenant] = relationship(back_populates="generated_files")
+    agent: Mapped[Agent] = relationship()
 
 
 class Collection(Base):
