@@ -386,4 +386,7 @@ export const api = {
       body: JSON.stringify({ content, attachment_ids: attachmentIds }),
     });
   },
+  submitHumanFeedback(body: { target_type: "message" | "workflow_run"; target_id: string; score: number; comment: string }) {
+    return request<{ status: "submitted" }>("/api/feedback", { method: "POST", body: JSON.stringify(body) });
+  },
 };

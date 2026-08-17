@@ -10,6 +10,7 @@ import { ToolsPage } from "./pages/ToolsPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
+import { WorkflowStudioPage } from "./pages/WorkflowStudioPage";
 import { useGlobalInputUndo } from "./useGlobalInputUndo";
 
 export default function App() {
@@ -27,7 +28,7 @@ export default function App() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/collections" element={<CollectionsPage />} />
             <Route path="/multi-agent" element={<WorkflowsPage />} />
-            <Route path="/workflows" element={<Navigate to="/multi-agent" replace />} />
+            <Route path="/workflows" element={<WorkflowStudioPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

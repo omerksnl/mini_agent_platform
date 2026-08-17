@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.core.observability import bind_trace_context
 from app.core.services.agent_service import AgentService
 from app.core.services.llm_service import LLMClient, LLMError, LLMResult
 from app.core.services.attachment_service import AttachmentError, AttachmentService
@@ -152,32 +153,37 @@ class ConversationService:
             )
         llm_messages.append({"role": "user", "content": llm_content})
         try:
-            if attachments:
-                llm_result = llm_client.complete(
-                    conversation.agent,
-                    llm_messages,
-                    conversation.agent.http_tools,
-                    attachments,
-                    self.db,
-                )
-            else:
-                if (
-                    conversation.agent.collections
-                    or conversation.agent.agent_type in {"supervisor", "router"}
-                    or "text_to_pdf" in conversation.agent.system_tools
-                ):
+            with bind_trace_context(
+                workflow_run_id=conversation.id,
+                workflow_name=f"chat:{conversation.agent.name}",
+                tenant_id=tenant_id,
+            ):
+                if attachments:
                     llm_result = llm_client.complete(
                         conversation.agent,
                         llm_messages,
                         conversation.agent.http_tools,
-                        db=self.db,
+                        attachments,
+                        self.db,
                     )
                 else:
-                    llm_result = llm_client.complete(
-                        conversation.agent,
-                        llm_messages,
-                        conversation.agent.http_tools,
-                    )
+                    if (
+                        conversation.agent.collections
+                        or conversation.agent.agent_type in {"supervisor", "router"}
+                        or "text_to_pdf" in conversation.agent.system_tools
+                    ):
+                        llm_result = llm_client.complete(
+                            conversation.agent,
+                            llm_messages,
+                            conversation.agent.http_tools,
+                            db=self.db,
+                        )
+                    else:
+                        llm_result = llm_client.complete(
+                            conversation.agent,
+                            llm_messages,
+                            conversation.agent.http_tools,
+                        )
         except LLMError as exc:
             self.db.rollback()
             raise ConversationError(str(exc), status_code=502) from exc

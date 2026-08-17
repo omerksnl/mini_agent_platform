@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 
 import { api, type Agent, type Attachment, type Conversation, type Message } from "../api";
 import { useAuth } from "../AuthContext";
+import { HumanFeedback } from "../components/HumanFeedback";
 
 export function ChatPage() {
   const { me, logout } = useAuth();
@@ -241,6 +242,7 @@ export function ChatPage() {
           <Link className="btn btn-primary" to="/">Agents</Link>
           <Link className="btn" to="/tools">Tools</Link>
           <Link className="btn" to="/skills">Skills</Link>
+          <Link className="btn" to="/workflows">Workflows</Link>
           <button type="button" className="btn" onClick={logout}>Sign out</button>
         </div>
       </header>
@@ -357,6 +359,7 @@ export function ChatPage() {
                       {message.role === "assistant" && message.api_cost_usd > 0 ? (
                         <p className="message-cost">API cost: ${message.api_cost_usd.toFixed(6)}</p>
                       ) : null}
+                      {message.role === "assistant" ? <HumanFeedback targetType="message" targetId={message.id} /> : null}
                       <div className="message-actions">
                         <button
                           type="button"

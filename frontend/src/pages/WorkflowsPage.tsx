@@ -6,6 +6,7 @@ import { api, type Agent, type AgentInput, type Workflow, type WorkflowInput, ty
 import { useAuth } from "../AuthContext";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
+import { HumanFeedback } from "../components/HumanFeedback";
 
 type CollectionMode = "off" | "search" | "full_context";
 type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; target_id: string; system_tool_name: string; required_input: string; task_instructions: string; collection_mode: CollectionMode; input_artifact_keys: string; max_output_tokens: string; report_input_key: string; report_template_id: "blank_markdown" | "two_column"; report_filename: string; report_title: string; next_condition: WorkflowRouteCondition };
@@ -103,7 +104,7 @@ export function WorkflowsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Workflow | null>(null);
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>("workflow");
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("router");
   const [expandedSupervisors, setExpandedSupervisors] = useState<Set<string>>(new Set());
   const [showSupervisorForm, setShowSupervisorForm] = useState(false);
   const [supervisorForm, setSupervisorForm] = useState<AgentInput>(blankSupervisor);
@@ -331,12 +332,11 @@ export function WorkflowsPage() {
     : "Required human input";
 
   return <div className="app-shell">
-    <header className="box topbar"><div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div><div className="topbar-actions"><Link className="btn" to="/">Agents</Link><Link className="btn btn-primary" to="/multi-agent">Multi-agent</Link><Link className="btn" to="/chat">Chat</Link><button className="btn" onClick={logout}>Sign out</button></div></header>
+    <header className="box topbar"><div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div><div className="topbar-actions"><Link className="btn" to="/">Agents</Link><Link className="btn btn-primary" to="/multi-agent">Multi-agent</Link><Link className="btn" to="/workflows">Workflows</Link><Link className="btn" to="/chat">Chat</Link><button className="btn" onClick={logout}>Sign out</button></div></header>
     {error ? <p className="alert">{error}</p> : null}
     <section className="box execution-mode-panel">
       <div><h1>Multi-agent systems</h1><p>Choose how multiple agents coordinate for a task.</p></div>
       <div className="execution-mode-options">
-        <button className={`execution-mode-card${executionMode === "workflow" ? " active" : ""}`} type="button" onClick={() => selectMode("workflow")}><strong>Workflow</strong><small>Runs predefined steps in a controlled order.</small></button>
         <button className={`execution-mode-card${executionMode === "router" ? " active" : ""}`} type="button" onClick={() => selectMode("router")}><strong>Router</strong><small>Selects exactly one normal agent for each request.</small></button>
         <button className={`execution-mode-card${executionMode === "supervisor" ? " active" : ""}`} type="button" onClick={() => selectMode("supervisor")}><strong>Supervisor</strong><small>Coordinates managed agents dynamically.</small></button>
       </div>
@@ -356,6 +356,7 @@ export function WorkflowsPage() {
           {activeRun.status === "waiting" ? <form className="human-wait-form" onSubmit={resumeRun}><label>{requiredHumanInput}<textarea rows={4} required value={humanInput} onChange={(event) => setHumanInput(event.target.value)} placeholder={requiredHumanInput} /></label><button className="btn btn-primary" disabled={running}>{running ? "Continuing..." : "Continue workflow"}</button></form> : null}
           {activeRun.status === "failed" ? <p className="alert">{activeRun.error}</p> : null}
           {activeRun.status === "completed" ? <details className="workflow-result"><summary><strong>Final output</strong><span className="artifact-toggle-label">View</span></summary><div className="workflow-artifact-scroll"><ArtifactContent data={(activeRun.output_data.last_output ?? activeRun.output_data) as Record<string, unknown>} /></div></details> : null}
+          {activeRun.status === "completed" ? <HumanFeedback targetType="workflow_run" targetId={activeRun.id} /> : null}
           <p className="workflow-run-cost">API cost: ${activeRun.total_api_cost_usd.toFixed(6)}</p>
         </>}
       </div> : !open ? <div className="idle-panel"><p className="idle-title">Build a workflow</p><p>Create a workflow or select one to edit.</p></div> : <form className="stack" onSubmit={save}>

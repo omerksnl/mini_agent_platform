@@ -125,7 +125,7 @@ export function SkillsPage() {
         <div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div>
         <div className="topbar-actions">
           <Link className="btn" to="/">Agents</Link><Link className="btn" to="/chat">Chat</Link>
-          <Link className="btn" to="/tools">Tools</Link><button className="btn" onClick={logout}>Sign out</button>
+          <Link className="btn" to="/tools">Tools</Link><Link className="btn" to="/workflows">Workflows</Link><button className="btn" onClick={logout}>Sign out</button>
         </div>
       </header>
       <main className="layout">

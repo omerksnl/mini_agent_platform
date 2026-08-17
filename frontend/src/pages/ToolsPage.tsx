@@ -138,6 +138,7 @@ export function ToolsPage() {
           <Link className="btn" to="/">Agents</Link>
           <Link className="btn" to="/chat">Chat</Link>
           <Link className="btn" to="/skills">Skills</Link>
+          <Link className="btn" to="/workflows">Workflows</Link>
           <button type="button" className="btn" onClick={logout}>Sign out</button>
         </div>
       </header>

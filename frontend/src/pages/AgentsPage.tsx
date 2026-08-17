@@ -159,6 +159,7 @@ export function AgentsPage() {
           <Link className="btn" to="/skills">Skills</Link>
           <Link className="btn" to="/collections">Collections</Link>
           <Link className="btn" to="/multi-agent">Multi-agent</Link>
+          <Link className="btn" to="/workflows">Workflows</Link>
           <button type="button" className="btn" onClick={logout}>
             Sign out
           </button>

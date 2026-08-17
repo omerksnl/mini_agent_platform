@@ -3,6 +3,7 @@ from contextvars import ContextVar
 from functools import lru_cache
 import logging
 from typing import Any, Iterator
+from uuid import UUID, uuid5, NAMESPACE_URL
 
 from app.config import Settings
 
@@ -76,3 +77,42 @@ def langfuse_metadata(*, agent_name: str, agent_type: str) -> dict[str, Any]:
     if step_key := context.get("step_key"):
         metadata["workflow_step_key"] = step_key
     return metadata
+
+
+def submit_human_feedback(
+    settings: Settings,
+    *,
+    session_id: str,
+    target_type: str,
+    target_id: UUID,
+    user_id: UUID,
+    tenant_id: UUID,
+    score: int,
+    comment: str | None,
+) -> None:
+    """Create or update one deterministic Langfuse score for a platform output."""
+    if not settings.langfuse_enabled:
+        raise RuntimeError("Langfuse is not configured")
+    client = _langfuse_client(
+        settings.langfuse_public_key,
+        settings.langfuse_secret_key,
+        settings.langfuse_base_url,
+        settings.langfuse_tracing_environment,
+    )
+    score_id = str(uuid5(NAMESPACE_URL, f"mini-agent:{user_id}:{target_type}:{target_id}"))
+    client.create_score(
+        name="human_feedback",
+        value=float(score),
+        session_id=session_id,
+        score_id=score_id,
+        data_type="NUMERIC",
+        comment=comment or None,
+        metadata={
+            "source": "mini-agent-platform",
+            "target_type": target_type,
+            "target_id": str(target_id),
+            "user_id": str(user_id),
+            "tenant_id": str(tenant_id),
+        },
+    )
+    client.flush()
