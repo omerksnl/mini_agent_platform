@@ -62,3 +62,14 @@ class AgentResponse(BaseModel):
     managed_agent_ids: list[UUID]
     created_at: datetime
     updated_at: datetime
+
+
+class AgentPromptVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    agent_id: UUID
+    version_number: int
+    system_prompt: str
+    created_at: datetime
+    is_current: bool

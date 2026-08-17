@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api, type Agent, type AgentInput, type Collection, type HttpTool, type Skill } from "../api";
 import { useAuth } from "../AuthContext";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
+import { PromptVersionHistory } from "../components/PromptVersionHistory";
 
 const emptyForm: AgentInput = {
   name: "",
@@ -266,6 +267,10 @@ export function AgentsPage() {
                     onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
                   />
                 </label>
+                {mode === "edit" && editingId ? <PromptVersionHistory agentId={editingId} onRestored={(agent) => {
+                  setForm((current) => ({ ...current, system_prompt: agent.system_prompt }));
+                  void loadAgents();
+                }} /> : null}
                 <fieldset className="tool-picker">
                   <legend>Tools</legend>
                   <span className="field-hint">The agent can only call selected tools.</span>

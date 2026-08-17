@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import CurrentUser, get_current_user
 from app.core.services.agent_service import AgentError, AgentService
 from app.db.session import get_db
-from app.schemas.agent import AgentCreate, AgentResponse, AgentUpdate
+from app.schemas.agent import AgentCreate, AgentPromptVersionResponse, AgentResponse, AgentUpdate
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -55,6 +55,42 @@ def update_agent(
 ) -> AgentResponse:
     try:
         agent = AgentService(db).update_agent(agent_id, current.tenant_id, payload)
+    except AgentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return AgentResponse.model_validate(agent)
+
+
+@router.get("/{agent_id}/prompt-versions", response_model=list[AgentPromptVersionResponse])
+def list_prompt_versions(
+    agent_id: UUID,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+) -> list[AgentPromptVersionResponse]:
+    try:
+        service = AgentService(db)
+        agent = service.get_agent(agent_id, current.tenant_id)
+        versions = service.list_prompt_versions(agent_id, current.tenant_id)
+    except AgentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return [AgentPromptVersionResponse(
+        id=version.id,
+        agent_id=version.agent_id,
+        version_number=version.version_number,
+        system_prompt=version.system_prompt,
+        created_at=version.created_at,
+        is_current=version.id == agent.active_prompt_version_id,
+    ) for version in versions]
+
+
+@router.post("/{agent_id}/prompt-versions/{version_id}/restore", response_model=AgentResponse)
+def restore_prompt_version(
+    agent_id: UUID,
+    version_id: UUID,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+) -> AgentResponse:
+    try:
+        agent = AgentService(db).restore_prompt_version(agent_id, version_id, current.tenant_id)
     except AgentError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return AgentResponse.model_validate(agent)

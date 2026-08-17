@@ -95,6 +95,11 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    active_prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_prompt_versions.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
     model: Mapped[str] = mapped_column(
         String(128), nullable=False, default="anthropic/claude-haiku-4.5"
     )
@@ -137,6 +142,12 @@ class Agent(Base):
         secondaryjoin=id == supervisor_agents.c.supervisor_id,
         back_populates="managed_agents",
     )
+    prompt_versions: Mapped[list["AgentPromptVersion"]] = relationship(
+        back_populates="agent",
+        foreign_keys="AgentPromptVersion.agent_id",
+        cascade="all, delete-orphan",
+        order_by="desc(AgentPromptVersion.version_number)",
+    )
 
     @property
     def tool_ids(self) -> list[uuid.UUID]:
@@ -161,6 +172,26 @@ class Agent(Base):
     @property
     def supervisor_ids(self) -> list[uuid.UUID]:
         return [item.id for item in self.supervisors]
+
+
+class AgentPromptVersion(Base):
+    __tablename__ = "agent_prompt_versions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "version_number", name="uq_agent_prompt_versions_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    agent: Mapped[Agent] = relationship(
+        back_populates="prompt_versions",
+        foreign_keys=[agent_id],
+    )
 
 
 class HttpTool(Base):

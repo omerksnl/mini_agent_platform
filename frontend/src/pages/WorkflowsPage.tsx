@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { api, type Agent, type AgentInput, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
 import { useAuth } from "../AuthContext";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
+import { PromptVersionHistory } from "../components/PromptVersionHistory";
 
 type CollectionMode = "off" | "search" | "full_context";
 type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; target_id: string; system_tool_name: string; required_input: string; task_instructions: string; collection_mode: CollectionMode; input_artifact_keys: string; max_output_tokens: string; report_input_key: string; report_template_id: "blank_markdown" | "two_column"; report_filename: string; report_title: string; next_condition: WorkflowRouteCondition };
@@ -358,6 +359,10 @@ export function WorkflowsPage() {
         <div className="workflow-step-grid"><label>Name<input required value={supervisorForm.name} onChange={(event) => setSupervisorForm({ ...supervisorForm, name: event.target.value })} /></label><label>Model<select value={supervisorForm.model} onChange={(event) => setSupervisorForm({ ...supervisorForm, model: event.target.value })}>{MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.provider}</option>)}</select></label></div>
         <label>Temperature ({supervisorForm.temperature.toFixed(1)})<input type="range" min={0} max={2} step={0.1} value={supervisorForm.temperature} onChange={(event) => setSupervisorForm({ ...supervisorForm, temperature: Number(event.target.value) })} /></label>
         <label>System prompt<textarea rows={6} required value={supervisorForm.system_prompt} onChange={(event) => setSupervisorForm({ ...supervisorForm, system_prompt: event.target.value })} /></label>
+        {editingSupervisorId ? <PromptVersionHistory agentId={editingSupervisorId} onRestored={(agent) => {
+          setSupervisorForm((current) => ({ ...current, system_prompt: agent.system_prompt }));
+          void load();
+        }} /> : null}
         <fieldset className="tool-picker"><legend>Managed agents</legend><span className="field-hint">Normal agents can be reused by multiple supervisors.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={supervisorForm.managed_agent_ids.includes(agent.id)} onChange={(event) => setSupervisorForm({ ...supervisorForm, managed_agent_ids: event.target.checked ? [...supervisorForm.managed_agent_ids, agent.id] : supervisorForm.managed_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset>
         <div className="form-actions"><button className="btn" type="button" onClick={() => { setShowSupervisorForm(false); setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSearchParams({ mode: "supervisor" }); }}>Cancel</button><button className="btn btn-primary" disabled={savingSupervisor}>{savingSupervisor ? "Saving..." : editingSupervisorId ? "Save supervisor" : "Create supervisor"}</button></div>
       </form> : null}

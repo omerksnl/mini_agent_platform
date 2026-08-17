@@ -129,6 +129,15 @@ export type WorkflowStepInput = {
   system_tool_name: string | null;
   config: Record<string, unknown>;
 };
+
+export type AgentPromptVersion = {
+  id: string;
+  agent_id: string;
+  version_number: number;
+  system_prompt: string;
+  created_at: string;
+  is_current: boolean;
+};
 export type WorkflowRouteInput = {
   source_step_key: string;
   target_step_key: string;
@@ -267,6 +276,14 @@ export const api = {
     return request<Agent>(`/api/agents/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    });
+  },
+  listAgentPromptVersions(id: string) {
+    return request<AgentPromptVersion[]>(`/api/agents/${id}/prompt-versions`);
+  },
+  restoreAgentPromptVersion(id: string, versionId: string) {
+    return request<Agent>(`/api/agents/${id}/prompt-versions/${versionId}/restore`, {
+      method: "POST",
     });
   },
   deleteAgent(id: string) {

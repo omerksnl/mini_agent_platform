@@ -830,6 +830,94 @@ input[type="range"] {
   letter-spacing: 0;
 }
 
+.prompt-history {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f7f7f7;
+  padding: 0.75rem;
+}
+
+.prompt-history > summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--text);
+}
+
+.prompt-history > summary span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.prompt-version-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.prompt-version {
+  padding: 0.65rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--primary);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.prompt-version.current {
+  border-left-width: 4px;
+}
+
+.prompt-version > summary {
+  cursor: pointer;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  list-style: none;
+}
+
+.prompt-version > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prompt-version > summary > span:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.prompt-version small {
+  color: var(--muted);
+}
+
+.prompt-version-preview {
+  display: block;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prompt-version-content {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0.7rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text-dark);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-version > .btn {
+  width: 100%;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

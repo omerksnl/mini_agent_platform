@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Agent, AgentSkill, Skill
+from app.models import Agent, AgentPromptVersion, AgentSkill, Skill
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.core.services.tool_service import ToolError, ToolService
 from app.core.services.skill_service import SkillError, SkillService
@@ -20,6 +20,8 @@ class AgentError(Exception):
 
 
 class AgentService:
+    PROMPT_VERSION_LIMIT = 3
+
     def __init__(self, db: Session) -> None:
         self.db = db
 
@@ -65,17 +67,22 @@ class AgentService:
         )
         agent.skill_links = [AgentSkill(skill=skill, position=index) for index, skill in enumerate(skills)]
         self.db.add(agent)
+        self.db.flush()
+        initial_version = self._record_prompt_version(agent, payload.system_prompt)
+        agent.active_prompt_version_id = initial_version.id
         self.db.commit()
         self.db.refresh(agent)
         return agent
 
     def update_agent(self, agent_id: UUID, tenant_id: UUID, payload: AgentUpdate) -> Agent:
         agent = self.get_agent(agent_id, tenant_id)
+        agent_prompt_before_update = agent.system_prompt
         data = payload.model_dump(exclude_unset=True)
         tool_ids = data.pop("tool_ids", None)
         skill_ids = data.pop("skill_ids", None)
         collection_ids = data.pop("collection_ids", None)
         managed_agent_ids = data.pop("managed_agent_ids", None)
+        next_prompt = data.get("system_prompt")
         target_type = data.get("agent_type", agent.agent_type)
         if target_type == "supervisor" and agent.supervisors:
             raise AgentError("A managed agent cannot become a supervisor")
@@ -104,9 +111,63 @@ class AgentService:
             agent.managed_agents = self._get_managed_agents(managed_agent_ids, tenant_id, supervisor_id=agent.id)
         for key, value in data.items():
             setattr(agent, key, value)
+        if next_prompt is not None and next_prompt != agent_prompt_before_update:
+            new_version = self._record_prompt_version(agent, next_prompt)
+            agent.active_prompt_version_id = new_version.id
         self.db.commit()
         self.db.refresh(agent)
         return agent
+
+    def list_prompt_versions(self, agent_id: UUID, tenant_id: UUID) -> list[AgentPromptVersion]:
+        self.get_agent(agent_id, tenant_id)
+        stmt = (
+            select(AgentPromptVersion)
+            .where(AgentPromptVersion.agent_id == agent_id)
+            .order_by(AgentPromptVersion.version_number.desc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def restore_prompt_version(
+        self, agent_id: UUID, version_id: UUID, tenant_id: UUID
+    ) -> Agent:
+        agent = self.get_agent(agent_id, tenant_id)
+        version = self.db.scalar(
+            select(AgentPromptVersion).where(
+                AgentPromptVersion.id == version_id,
+                AgentPromptVersion.agent_id == agent.id,
+            )
+        )
+        if not version:
+            raise AgentError("Prompt version not found", status_code=404)
+        if version.id != agent.active_prompt_version_id:
+            agent.system_prompt = version.system_prompt
+            agent.active_prompt_version_id = version.id
+            self.db.commit()
+            self.db.refresh(agent)
+        return agent
+
+    def _record_prompt_version(self, agent: Agent, system_prompt: str) -> AgentPromptVersion:
+        latest_number = self.db.scalar(
+            select(func.max(AgentPromptVersion.version_number)).where(
+                AgentPromptVersion.agent_id == agent.id
+            )
+        ) or 0
+        version = AgentPromptVersion(
+            agent_id=agent.id,
+            version_number=latest_number + 1,
+            system_prompt=system_prompt,
+        )
+        self.db.add(version)
+        self.db.flush()
+        stale_versions = list(self.db.scalars(
+            select(AgentPromptVersion)
+            .where(AgentPromptVersion.agent_id == agent.id)
+            .order_by(AgentPromptVersion.version_number.desc())
+            .offset(self.PROMPT_VERSION_LIMIT)
+        ).all())
+        for stale in stale_versions:
+            self.db.delete(stale)
+        return version
 
     def delete_agent(self, agent_id: UUID, tenant_id: UUID) -> None:
         agent = self.get_agent(agent_id, tenant_id)
