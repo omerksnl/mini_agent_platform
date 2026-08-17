@@ -43,8 +43,9 @@ class AgentService:
 
     def create_agent(self, tenant_id: UUID, payload: AgentCreate) -> Agent:
         self._validate_system_tools(payload.system_tools)
-        if payload.agent_type == "normal" and payload.managed_agent_ids:
-            raise AgentError("Normal agents cannot manage other agents")
+        self._validate_relationship_shape(
+            payload.agent_type, payload.managed_agent_ids, payload.router_target_ids
+        )
         try:
             http_tools = ToolService(self.db).get_tools(payload.tool_ids, tenant_id)
         except ToolError as exc:
@@ -52,6 +53,7 @@ class AgentService:
         skills = self._get_skills(payload.skill_ids, tenant_id)
         collections = self._get_collections(payload.collection_ids, tenant_id)
         managed_agents = self._get_managed_agents(payload.managed_agent_ids, tenant_id)
+        router_targets = self._get_router_targets(payload.router_target_ids, tenant_id)
         self._validate_skill_requirements(skills, payload.system_tools, http_tools)
         agent = Agent(
             tenant_id=tenant_id,
@@ -64,6 +66,7 @@ class AgentService:
             http_tools=http_tools,
             collections=collections,
             managed_agents=managed_agents,
+            router_targets=router_targets,
         )
         agent.skill_links = [AgentSkill(skill=skill, position=index) for index, skill in enumerate(skills)]
         self.db.add(agent)
@@ -82,14 +85,14 @@ class AgentService:
         skill_ids = data.pop("skill_ids", None)
         collection_ids = data.pop("collection_ids", None)
         managed_agent_ids = data.pop("managed_agent_ids", None)
+        router_target_ids = data.pop("router_target_ids", None)
         next_prompt = data.get("system_prompt")
         target_type = data.get("agent_type", agent.agent_type)
-        if target_type == "supervisor" and agent.supervisors:
-            raise AgentError("A managed agent cannot become a supervisor")
-        if target_type == "normal":
-            requested_managed = managed_agent_ids if managed_agent_ids is not None else agent.managed_agent_ids
-            if requested_managed:
-                raise AgentError("Normal agents cannot manage other agents")
+        if target_type != "normal" and (agent.supervisors or agent.routers):
+            raise AgentError("An agent used by a multi-agent system must remain a normal agent")
+        requested_managed = managed_agent_ids if managed_agent_ids is not None else agent.managed_agent_ids
+        requested_targets = router_target_ids if router_target_ids is not None else agent.router_target_ids
+        self._validate_relationship_shape(target_type, requested_managed, requested_targets)
         if "system_tools" in data:
             self._validate_system_tools(data["system_tools"])
         if tool_ids is not None:
@@ -109,6 +112,8 @@ class AgentService:
             agent.collections = self._get_collections(collection_ids, tenant_id)
         if managed_agent_ids is not None:
             agent.managed_agents = self._get_managed_agents(managed_agent_ids, tenant_id, supervisor_id=agent.id)
+        if router_target_ids is not None:
+            agent.router_targets = self._get_router_targets(router_target_ids, tenant_id, router_id=agent.id)
         for key, value in data.items():
             setattr(agent, key, value)
         if next_prompt is not None and next_prompt != agent_prompt_before_update:
@@ -217,6 +222,43 @@ class AgentService:
         if any(item.agent_type != "normal" for item in ordered):
             raise AgentError("Supervisors can manage only normal agents")
         return ordered
+
+    def _get_router_targets(
+        self,
+        agent_ids: list[UUID],
+        tenant_id: UUID,
+        router_id: UUID | None = None,
+    ) -> list[Agent]:
+        if not agent_ids:
+            return []
+        unique_ids = list(dict.fromkeys(agent_ids))
+        if len(unique_ids) != len(agent_ids):
+            raise AgentError("Router target selection contains duplicates")
+        if router_id is not None and router_id in unique_ids:
+            raise AgentError("A router cannot target itself")
+        agents = list(self.db.scalars(select(Agent).where(
+            Agent.id.in_(unique_ids), Agent.tenant_id == tenant_id
+        )).all())
+        if len(agents) != len(unique_ids):
+            raise AgentError("One or more router targets were not found", 404)
+        by_id = {item.id: item for item in agents}
+        ordered = [by_id[item_id] for item_id in unique_ids]
+        if any(item.agent_type != "normal" for item in ordered):
+            raise AgentError("Routers can target only normal agents")
+        return ordered
+
+    @staticmethod
+    def _validate_relationship_shape(
+        agent_type: str,
+        managed_agent_ids: list,
+        router_target_ids: list,
+    ) -> None:
+        if agent_type == "normal" and (managed_agent_ids or router_target_ids):
+            raise AgentError("Normal agents cannot manage or route to other agents")
+        if agent_type == "supervisor" and router_target_ids:
+            raise AgentError("Supervisors cannot have router targets")
+        if agent_type == "router" and managed_agent_ids:
+            raise AgentError("Routers cannot manage supervisor agents")
 
     @staticmethod
     def _validate_skill_requirements(skills: list[Skill], system_tools: list[str], http_tools: list) -> None:

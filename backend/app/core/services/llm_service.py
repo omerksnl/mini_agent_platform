@@ -83,6 +83,11 @@ class ValidationDecision(BaseModel):
     missing_parts: list[str] = Field(default_factory=list)
 
 
+class RouterAgentDecision(BaseModel):
+    target_agent_id: str | None = None
+    clarification_question: str | None = None
+
+
 class LLMClient(Protocol):
     def complete(
         self,
@@ -125,10 +130,15 @@ class OpenRouterLLMClient:
         max_output_tokens: int | None = None,
     ) -> LLMResult:
         is_supervisor = agent.agent_type == "supervisor"
+        is_router = agent.agent_type == "router"
         if is_supervisor and not agent.managed_agents:
             raise LLMError("This supervisor has no managed agents")
         if is_supervisor and db is None:
             raise LLMError("Supervisor database context is unavailable")
+        if is_router and not agent.router_targets:
+            raise LLMError("This router has no target agents")
+        if is_router and db is None:
+            raise LLMError("Router database context is unavailable")
         cost_callback = ApiCostCallbackHandler(
             self.settings.llm_input_cost_per_million_usd,
             self.settings.llm_output_cost_per_million_usd,
@@ -159,6 +169,17 @@ class OpenRouterLLMClient:
             base_url=self.settings.openrouter_base_url,
             default_headers={"X-OpenRouter-Title": self.settings.openrouter_app_title},
         )
+        if is_router:
+            return self._complete_router(
+                agent,
+                model,
+                messages,
+                attachments or [],
+                db,
+                cost_callback,
+                tracing_callbacks,
+                tracing_metadata,
+            )
         selected_system_tools = [
             SYSTEM_TOOL_MAP[name]
             for name in agent.system_tools
@@ -344,6 +365,69 @@ class OpenRouterLLMClient:
             used_skills=[skill.name for skill in selected_skills],
             used_agents=used_agents,
             api_cost_usd=round(cost_callback.total_cost_usd + delegated_cost_usd, 8),
+        )
+
+    def _complete_router(
+        self,
+        router_agent: Agent,
+        model: ChatOpenAI,
+        messages: list[dict[str, str]],
+        attachments: list[Attachment],
+        db: Session,
+        cost_callback: ApiCostCallbackHandler,
+        callbacks: list[Any],
+        metadata: dict[str, Any],
+    ) -> LLMResult:
+        catalog = "\n\n".join(
+            f"TARGET ID: {target.id}\nNAME: {target.name}\nSPECIALTY: {target.system_prompt[:1200]}"
+            for target in router_agent.router_targets
+        )
+        latest_user = next(
+            (item["content"] for item in reversed(messages) if item["role"] == "user"), ""
+        )
+        selector = model.with_structured_output(RouterAgentDecision)
+        try:
+            decision = selector.invoke([
+                SystemMessage(content=(
+                    f"{router_agent.system_prompt}\n\n"
+                    "Select exactly one target agent that best matches the latest user request. "
+                    "Use only a TARGET ID from the catalog. If the request is genuinely ambiguous, "
+                    "leave target_agent_id empty and return one concise clarification or choice menu. "
+                    "A choice menu may contain up to four short options when the router instructions request it. "
+                    "Never answer the user's request yourself.\n\nTARGET AGENTS\n" + catalog
+                )),
+                HumanMessage(content=latest_user),
+            ], config={"callbacks": callbacks, "metadata": metadata})
+        except Exception as exc:
+            raise LLMError("The agent router failed") from exc
+
+        target = next(
+            (item for item in router_agent.router_targets if str(item.id) == decision.target_agent_id),
+            None,
+        )
+        if target is None:
+            question = (decision.clarification_question or "What kind of help would you like?").strip()
+            return LLMResult(
+                content=question,
+                used_tools=[],
+                used_agents=[],
+                api_cost_usd=round(cost_callback.total_cost_usd, 8),
+            )
+
+        forwarded_attachments = attachments if "pdf_to_text" in target.system_tools else []
+        child_result = self.complete(
+            target,
+            messages,
+            target.http_tools,
+            forwarded_attachments,
+            db,
+        )
+        return LLMResult(
+            content=child_result.content,
+            used_tools=child_result.used_tools,
+            used_skills=child_result.used_skills,
+            used_agents=[target.name, *[name for name in child_result.used_agents if name != target.name]],
+            api_cost_usd=round(cost_callback.total_cost_usd + child_result.api_cost_usd, 8),
         )
 
     @staticmethod

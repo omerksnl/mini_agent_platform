@@ -163,7 +163,7 @@ class ConversationService:
             else:
                 if (
                     conversation.agent.collections
-                    or conversation.agent.agent_type == "supervisor"
+                    or conversation.agent.agent_type in {"supervisor", "router"}
                     or "text_to_pdf" in conversation.agent.system_tools
                 ):
                     llm_result = llm_client.complete(

@@ -35,6 +35,12 @@ supervisor_agents = Table(
     Column("managed_agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
 )
 
+router_agents = Table(
+    "router_agents", Base.metadata,
+    Column("router_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("target_agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class AgentSkill(Base):
     __tablename__ = "agent_skills"
@@ -142,6 +148,18 @@ class Agent(Base):
         secondaryjoin=id == supervisor_agents.c.supervisor_id,
         back_populates="managed_agents",
     )
+    router_targets: Mapped[list["Agent"]] = relationship(
+        secondary=router_agents,
+        primaryjoin=id == router_agents.c.router_id,
+        secondaryjoin=id == router_agents.c.target_agent_id,
+        back_populates="routers",
+    )
+    routers: Mapped[list["Agent"]] = relationship(
+        secondary=router_agents,
+        primaryjoin=id == router_agents.c.target_agent_id,
+        secondaryjoin=id == router_agents.c.router_id,
+        back_populates="router_targets",
+    )
     prompt_versions: Mapped[list["AgentPromptVersion"]] = relationship(
         back_populates="agent",
         foreign_keys="AgentPromptVersion.agent_id",
@@ -172,6 +190,14 @@ class Agent(Base):
     @property
     def supervisor_ids(self) -> list[uuid.UUID]:
         return [item.id for item in self.supervisors]
+
+    @property
+    def router_target_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.router_targets]
+
+    @property
+    def router_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.routers]
 
 
 class AgentPromptVersion(Base):

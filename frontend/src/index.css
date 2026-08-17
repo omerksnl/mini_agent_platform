@@ -778,7 +778,8 @@ label {
   white-space: nowrap;
 }
 
-.agent-type-badge.supervisor {
+.agent-type-badge.supervisor,
+.agent-type-badge.router {
   border-color: var(--primary);
   color: var(--primary);
 }

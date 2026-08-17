@@ -17,6 +17,7 @@ const emptyForm: AgentInput = {
   skill_ids: [],
   collection_ids: [],
   managed_agent_ids: [],
+  router_target_ids: [],
 };
 
 type PanelMode = "idle" | "create" | "edit";
@@ -92,6 +93,7 @@ export function AgentsPage() {
       skill_ids: agent.skill_ids,
       collection_ids: agent.collection_ids,
       managed_agent_ids: agent.managed_agent_ids,
+      router_target_ids: agent.router_target_ids,
     });
     setError("");
   }
@@ -137,7 +139,8 @@ export function AgentsPage() {
   }
 
   const displayedAgents = [...agents].sort((left, right) => {
-    if (left.agent_type !== right.agent_type) return left.agent_type === "supervisor" ? -1 : 1;
+    const typeOrder = { supervisor: 0, router: 1, normal: 2 } as const;
+    if (left.agent_type !== right.agent_type) return typeOrder[left.agent_type] - typeOrder[right.agent_type];
     return left.name.localeCompare(right.name);
   });
 
@@ -175,8 +178,8 @@ export function AgentsPage() {
           <ul className="agent-list agent-tree">
             {displayedAgents.map((agent) => (
               <li key={agent.id} className={`agent-tree-row ${editingId === agent.id ? "active" : ""}`}>
-                {agent.agent_type === "supervisor" ? <Link className="agent-item" to={`/multi-agent?mode=supervisor&edit=${agent.id}`}>
-                  <span className="agent-name-line"><strong>{agent.name}</strong><span className={`agent-type-badge${agent.agent_type === "supervisor" ? " supervisor" : ""}`}>{agent.agent_type === "supervisor" ? "Supervisor" : "Agent"}</span></span>
+                {agent.agent_type !== "normal" ? <Link className="agent-item" to={`/multi-agent?mode=${agent.agent_type}&edit=${agent.id}`}>
+                  <span className="agent-name-line"><strong>{agent.name}</strong><span className={`agent-type-badge ${agent.agent_type}`}>{agent.agent_type === "supervisor" ? "Supervisor" : "Router"}</span></span>
                   <span className="agent-meta">{agent.model} · t={agent.temperature}</span>
                 </Link> : <button type="button" className="agent-item" onClick={() => startEdit(agent)}>
                   <span className="agent-name-line"><strong>{agent.name}</strong><span className="agent-type-badge">Agent</span></span>
@@ -370,7 +373,9 @@ export function AgentsPage() {
               Remove <strong>{pendingDelete.name}</strong>? This cannot be undone.
               {pendingDelete.agent_type === "supervisor"
                 ? " Its managed agents will remain as independent agents."
-                : ""}
+                : pendingDelete.agent_type === "router"
+                  ? " Its target agents will remain as independent agents."
+                  : ""}
             </p>
             <div className="modal-actions">
               <button
