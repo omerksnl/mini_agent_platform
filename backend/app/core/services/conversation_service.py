@@ -117,10 +117,15 @@ class ConversationService:
             tenant_id,
             memory_limit,
         )
-        llm_messages = [
-            {"role": message.role, "content": message.content}
-            for message in recent_messages
-        ]
+        llm_messages = []
+        for message in recent_messages:
+            message_content = message.content
+            if conversation.agent.agent_type == "router" and message.role == "assistant" and message.used_agents:
+                message_content = (
+                    f"[ROUTING HISTORY: {', '.join(message.used_agents)}]\n"
+                    + message_content
+                )
+            llm_messages.append({"role": message.role, "content": message_content})
         user_message = Message(
             id=uuid4(),
             tenant_id=tenant_id,

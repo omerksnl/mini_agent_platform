@@ -196,7 +196,12 @@ class OpenRouterLLMClient:
         selected_tools = [*selected_system_tools, *build_http_tools(http_tools or [])]
         used_agents: list[str] = []
         delegated_cost_usd = 0.0
-        if agent.collections and use_collections:
+        has_collection_content = any(
+            document.chunks
+            for collection in agent.collections
+            for document in collection.documents
+        )
+        if agent.collections and use_collections and has_collection_content:
             if db is None:
                 raise LLMError("Collection tool database context is unavailable")
             selected_tools.append(build_collection_search_tool(db, agent))
@@ -385,18 +390,23 @@ class OpenRouterLLMClient:
         latest_user = next(
             (item["content"] for item in reversed(messages) if item["role"] == "user"), ""
         )
+        recent_context = "\n".join(
+            f"{item['role'].upper()}: {item['content'][:800]}"
+            for item in messages[-6:]
+        )
         selector = model.with_structured_output(RouterAgentDecision)
         try:
             decision = selector.invoke([
                 SystemMessage(content=(
                     f"{router_agent.system_prompt}\n\n"
                     "Select exactly one target agent that best matches the latest user request. "
-                    "Use only a TARGET ID from the catalog. If the request is genuinely ambiguous, "
-                    "leave target_agent_id empty and return one concise clarification or choice menu. "
+                    "Use the recent conversation to understand rejection phrases such as 'another one' or 'I did not like it'. "
+                    "Use only a TARGET ID from the catalog. Only leave target_agent_id empty when the router instructions explicitly permit a clarification question. "
+                    "When the instructions require an immediate or default selection, select a target even if preferences are incomplete. "
                     "A choice menu may contain up to four short options when the router instructions request it. "
                     "Never answer the user's request yourself.\n\nTARGET AGENTS\n" + catalog
                 )),
-                HumanMessage(content=latest_user),
+                HumanMessage(content=f"RECENT CONVERSATION\n{recent_context}\n\nLATEST USER REQUEST\n{latest_user}"),
             ], config={"callbacks": callbacks, "metadata": metadata})
         except Exception as exc:
             raise LLMError("The agent router failed") from exc
@@ -540,7 +550,9 @@ class OpenRouterLLMClient:
                     "Decompose the user's request into independently answerable parts. Select only relevant skills. "
                     "Do not select or execute a skill when the user is only asking how that capability works. "
                     "Select a tool as required when accurate completion needs calculation, current information, "
-                    "external data, or an operation the model cannot reliably perform itself. Use only catalog names.\n\n"
+                    "external data, or an operation the model cannot reliably perform itself. "
+                    "When the user asks for a recommendation and collection_search is available, always mark collection_search as required; "
+                    "the assigned collection, not the model's general knowledge, must supply the recommendation. Use only catalog names.\n\n"
                     f"SKILLS\n{skill_catalog}\n\nTOOLS\n{tool_catalog}"
                 )),
                 HumanMessage(content=latest_user),

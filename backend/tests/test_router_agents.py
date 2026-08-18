@@ -67,7 +67,10 @@ def test_router_selects_exactly_one_agent(
         router = db.scalar(select(Agent).where(Agent.id == UUID(router_data["id"])))
 
         class Selector:
-            def invoke(self, _messages, config=None):
+            received_messages = None
+
+            def invoke(self, messages, config=None):
+                Selector.received_messages = messages
                 return RouterAgentDecision(target_agent_id=movie["id"])
 
         class Model:
@@ -92,5 +95,7 @@ def test_router_selects_exactly_one_agent(
         assert result.content == "Watch Arrival."
         assert result.used_agents == ["movie_series_agent"]
         assert result.api_cost_usd == 0.005
+        assert "RECENT CONVERSATION" in Selector.received_messages[-1].content
+        assert "I want a science-fiction movie" in Selector.received_messages[-1].content
     finally:
         db.close()
