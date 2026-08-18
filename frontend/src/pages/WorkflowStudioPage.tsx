@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import {
   api,
@@ -9,6 +11,7 @@ import {
   type WorkflowRouteCondition,
   type WorkflowRouteInput,
   type WorkflowRun,
+  type WorkflowArtifact,
   type WorkflowStepInput,
 } from "../api";
 import { useAuth } from "../AuthContext";
@@ -17,11 +20,47 @@ type Point = { x: number; y: number };
 type StudioNode = WorkflowStepInput & { point: Point };
 type StudioRoute = WorkflowRouteInput;
 type NodeKind = "human_wait" | "report";
+type ExecutionStatus = "pending" | "running" | "waiting" | "completed" | "failed";
 
 const CANVAS_WIDTH = 1400;
 const CANVAS_HEIGHT = 820;
 const NODE_WIDTH = 190;
 const NODE_HEIGHT = 92;
+
+function readableLabel(value: string): string {
+  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function structuredMarkdown(value: unknown, depth = 2): string {
+  if (value === null || value === undefined) return "_None_";
+  if (Array.isArray(value)) {
+    if (!value.length) return "_None_";
+    return value.map((item, index) => item && typeof item === "object"
+      ? `${"#".repeat(Math.min(depth, 6))} ${index + 1}\n\n${structuredMarkdown(item, depth + 1)}`
+      : `- ${typeof item === "boolean" ? item ? "Yes" : "No" : String(item)}`
+    ).join("\n\n");
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (!entries.length) return "_None_";
+    return entries.map(([key, item]) => `${"#".repeat(Math.min(depth, 6))} ${readableLabel(key)}\n\n${structuredMarkdown(item, depth + 1)}`).join("\n\n");
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function ArtifactMarkdown({ data }: { data: Record<string, unknown> }) {
+  const humanInput = data.human_input && typeof data.human_input === "object" ? data.human_input as Record<string, unknown> : null;
+  const content = typeof data.content === "string" ? data.content : typeof data.result === "string" ? data.result : typeof humanInput?.response === "string" ? humanInput.response : null;
+  let markdown = content ?? structuredMarkdown(data);
+  if (content) {
+    const trimmed = content.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try { markdown = structuredMarkdown(JSON.parse(trimmed)); } catch { /* Keep the model's Markdown. */ }
+    }
+  }
+  return <div className="markdown-content workflow-artifact-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown></div>;
+}
 
 function nodeKey(name: string, nodes: StudioNode[]): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "step";
@@ -145,6 +184,7 @@ export function WorkflowStudioPage() {
   const [humanInput, setHumanInput] = useState("");
   const [runFile, setRunFile] = useState<File | null>(null);
   const [running, setRunning] = useState(false);
+  const [artifactPreview, setArtifactPreview] = useState<WorkflowArtifact | null>(null);
   const pollSequence = useRef(0);
 
   const selectedNode = nodes.find((node) => node.step_key === selectedKey) ?? null;
@@ -267,7 +307,8 @@ export function WorkflowStudioPage() {
   }
 
   function openRunner(workflow: Workflow) {
-    setRunWorkflow(workflow); setActiveRun(null); setRunInput(""); setHumanInput(""); setRunFile(null); setError("");
+    openWorkflow(workflow);
+    setRunWorkflow(workflow); setActiveRun(null); setRunInput(""); setHumanInput(""); setRunFile(null); setArtifactPreview(null); setError("");
   }
 
   async function startRun(event: FormEvent) {
@@ -282,8 +323,7 @@ export function WorkflowStudioPage() {
     finally { setRunning(false); }
   }
 
-  async function resumeRun(event: FormEvent) {
-    event.preventDefault();
+  async function continueRun() {
     if (!activeRun) return;
     setRunning(true); setError("");
     try { setActiveRun(await api.resumeWorkflowRun(activeRun.id, { response: humanInput.trim() })); setHumanInput(""); }
@@ -291,10 +331,30 @@ export function WorkflowStudioPage() {
     finally { setRunning(false); }
   }
 
+  async function resumeRun(event: FormEvent) {
+    event.preventDefault();
+    await continueRun();
+  }
+
   const completedSteps = activeRun?.step_runs.filter((step) => step.status === "completed").length ?? 0;
   const runProgress = runWorkflow ? Math.round((completedSteps / runWorkflow.steps.length) * 100) : 0;
   const waitingDefinition = activeRun?.current_step_id ? runWorkflow?.steps.find((step) => "id" in step && step.id === activeRun.current_step_id) : null;
   const requiredHumanInput = typeof waitingDefinition?.config.required_input === "string" && waitingDefinition.config.required_input.trim() ? waitingDefinition.config.required_input : "Required human input";
+  const executionMode = Boolean(activeRun && runWorkflow);
+  const stepRunFor = (key: string) => activeRun?.step_runs.find((step) => step.step_key === key);
+  const statusFor = (key: string): ExecutionStatus => (stepRunFor(key)?.status as ExecutionStatus | undefined) ?? "pending";
+  const artifactFor = (key: string) => {
+    const stepRun = stepRunFor(key);
+    return stepRun ? [...(activeRun?.artifacts ?? [])].reverse().find((artifact) => artifact.step_run_id === stepRun.id) : undefined;
+  };
+  const chosenRouteIndex = (sourceKey: string) => {
+    const source = nodes.find((node) => node.step_key === sourceKey);
+    const stepRun = stepRunFor(sourceKey);
+    if (!source || !stepRun || (stepRun.status !== "completed" && stepRun.status !== "failed")) return -1;
+    const event: WorkflowRouteCondition = stepRun.status === "failed" ? "failure" : source.step_type === "human_wait" ? "input_available" : "success";
+    const outgoing = routes.map((route, index) => ({ route, index })).filter(({ route }) => route.source_step_key === sourceKey).sort((a, b) => a.route.priority - b.route.priority);
+    return (outgoing.find(({ route }) => route.condition === event) ?? outgoing.find(({ route }) => route.condition === "always"))?.index ?? -1;
+  };
 
   return <div className="app-shell workflow-studio-page">
     <header className="box topbar"><div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div><div className="topbar-actions"><Link className="btn" to="/">Agents</Link><Link className="btn" to="/multi-agent">Multi-agent</Link><Link className="btn btn-primary" to="/workflows">Workflows</Link><Link className="btn" to="/chat">Chat</Link><button className="btn" onClick={logout}>Sign out</button></div></header>
@@ -312,10 +372,11 @@ export function WorkflowStudioPage() {
       </aside>
       <form className="box workflow-studio-main" onSubmit={save}>
         <div className="workflow-studio-meta"><label>Name<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="New workflow" /></label><label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this workflow do?" /></label><label className="checkbox-line"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />Active</label></div>
+        {executionMode && activeRun ? <div className={`studio-execution-bar status-${activeRun.status}`}><span><strong>{activeRun.status === "waiting" ? "Waiting for human input" : activeRun.status}</strong><small>{completedSteps}/{runWorkflow?.steps.length ?? nodes.length} nodes · ${activeRun.total_api_cost_usd.toFixed(6)}</small></span><div className="workflow-progress"><span style={{ width: `${runProgress}%` }} /></div><button type="button" className="icon-close" title="Close execution view" onClick={() => { setRunWorkflow(null); setActiveRun(null); setArtifactPreview(null); }}>×</button></div> : null}
         <div className="workflow-studio-canvas" onDragOver={(event) => event.preventDefault()} onDrop={dropOnCanvas}>
           <div className="workflow-studio-board" style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
             {!nodes.length ? <div className="studio-empty"><strong>Drag the first node here</strong><span>Then connect its output to the next node’s input.</span></div> : null}
-            <svg className="studio-edges" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} aria-hidden="true"><defs><marker id="workflow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>{routes.map((route, index) => { const source = nodes.find((node) => node.step_key === route.source_step_key); const target = nodes.find((node) => node.step_key === route.target_step_key); if (!source || !target) return null; const x1 = source.point.x + NODE_WIDTH; const y1 = source.point.y + NODE_HEIGHT / 2; const x2 = target.point.x; const y2 = target.point.y + NODE_HEIGHT / 2; const curve = Math.max(70, Math.abs(x2 - x1) * 0.45); return <path key={`${route.source_step_key}-${route.target_step_key}-${index}`} d={`M ${x1} ${y1} C ${x1 + curve} ${y1}, ${x2 - curve} ${y2}, ${x2} ${y2}`} markerEnd="url(#workflow-arrow)" />; })}</svg>
+            <svg className="studio-edges" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} aria-hidden="true"><defs>{(["pending", "running", "waiting", "completed", "failed"] as ExecutionStatus[]).map((status) => <marker id={`workflow-arrow-${status}`} className={`marker-${status}`} key={status} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>)}</defs>{routes.map((route, index) => { const source = nodes.find((node) => node.step_key === route.source_step_key); const target = nodes.find((node) => node.step_key === route.target_step_key); if (!source || !target) return null; const x1 = source.point.x + NODE_WIDTH; const y1 = source.point.y + NODE_HEIGHT / 2; const x2 = target.point.x; const y2 = target.point.y + NODE_HEIGHT / 2; const curve = Math.max(70, Math.abs(x2 - x1) * 0.45); const sourceStatus = executionMode ? statusFor(source.step_key) : "pending"; const chosen = executionMode && chosenRouteIndex(source.step_key) === index; return <path className={`studio-edge-path status-${sourceStatus}${chosen ? " taken" : ""}`} key={`${route.source_step_key}-${route.target_step_key}-${index}`} d={`M ${x1} ${y1} C ${x1 + curve} ${y1}, ${x2 - curve} ${y2}, ${x2} ${y2}`} markerEnd={`url(#workflow-arrow-${sourceStatus})`} />; })}</svg>
             {routes.map((route, index) => {
               const source = nodes.find((node) => node.step_key === route.source_step_key);
               const target = nodes.find((node) => node.step_key === route.target_step_key);
@@ -331,11 +392,14 @@ export function WorkflowStudioPage() {
                 </div> : null}
               </div>;
             })}
-            {nodes.map((node) => <article className={`studio-node ${node.step_type}${selectedKey === node.step_key ? " selected" : ""}${connectingFrom && connectingFrom !== node.step_key ? " connection-target" : ""}${graphErrors.some((message) => message.includes(`“${node.name}”`)) ? " invalid" : ""}`} draggable={!connectingFrom} onDragStart={(event) => { event.dataTransfer.setData("application/x-workflow-move", node.step_key); event.dataTransfer.effectAllowed = "move"; }} style={{ left: node.point.x, top: node.point.y }} key={node.step_key} onClick={() => { if (connectingFrom && connectingFrom !== node.step_key) connectTo(node.step_key); else setSelectedKey(node.step_key); }}>
+            {nodes.map((node) => { const nodeStatus = statusFor(node.step_key); const artifact = artifactFor(node.step_key); const generatedFile = artifact?.artifact_type === "generated_file" ? artifact.data as Record<string, unknown> : null; const isWaiting = executionMode && nodeStatus === "waiting"; return <article className={`studio-node ${node.step_type}${executionMode ? ` execution-${nodeStatus}` : ""}${selectedKey === node.step_key ? " selected" : ""}${connectingFrom && connectingFrom !== node.step_key ? " connection-target" : ""}${graphErrors.some((message) => message.includes(`“${node.name}”`)) ? " invalid" : ""}`} draggable={!executionMode && !connectingFrom} onDragStart={(event) => { if (executionMode) return; event.dataTransfer.setData("application/x-workflow-move", node.step_key); event.dataTransfer.effectAllowed = "move"; }} style={{ left: node.point.x, top: node.point.y }} key={node.step_key} onClick={() => { if (executionMode) { if (artifact) setArtifactPreview(artifact); return; } if (connectingFrom && connectingFrom !== node.step_key) connectTo(node.step_key); else setSelectedKey(node.step_key); }}>
               <button draggable={false} type="button" className={`node-port input${connectingFrom && connectingFrom !== node.step_key ? " ready" : ""}`} aria-label={`Connect to ${node.name}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); connectTo(node.step_key); }} />
-              <strong>{node.name}</strong><small>{node.step_type.replace("_", " ")}</small>
+              <strong>{node.name}</strong><small>{executionMode ? nodeStatus : node.step_type.replace("_", " ")}</small>
+              {artifact ? <button type="button" className="node-artifact-action" onClick={(event) => { event.stopPropagation(); setArtifactPreview(artifact); }}>View artifact</button> : null}
+              {generatedFile && typeof generatedFile.download_url === "string" ? <button type="button" className="node-download-action" onClick={(event) => { event.stopPropagation(); void api.downloadGeneratedFile(generatedFile.download_url as string, typeof generatedFile.filename === "string" ? generatedFile.filename : "report.pdf"); }}>Download PDF</button> : null}
+              {isWaiting ? <div className="node-human-input" onClick={(event) => event.stopPropagation()}><label>{requiredHumanInput}<textarea rows={3} value={humanInput} onChange={(event) => setHumanInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && humanInput.trim() && !running) { event.preventDefault(); void continueRun(); } }} /></label><button type="button" className="btn btn-primary btn-compact" disabled={running || !humanInput.trim()} onClick={() => void continueRun()}>{running ? "Continuing..." : "Continue"}</button></div> : null}
               <button draggable={false} type="button" className={`node-port output${connectingFrom === node.step_key ? " active" : ""}`} aria-label={`Connect from ${node.name}`} title="Start another connection" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setConnectingFrom((current) => current === node.step_key ? null : node.step_key); }}><span aria-hidden="true">+</span></button>
-            </article>)}
+            </article>; })}
           </div>
         </div>
         {selectedNode ? <section className="studio-node-settings"><div className="panel-head"><div><h2>Node settings</h2><p>{selectedNode.step_key}</p></div><button type="button" className="btn btn-danger btn-compact" onClick={() => removeNode(selectedNode.step_key)}>Remove node</button></div><label>Artifact name<input value={selectedNode.name} onChange={(event) => patchNode(selectedNode.step_key, { name: event.target.value })} /></label>{selectedNode.step_type === "agent" ? <label>Task instructions<textarea rows={4} value={String(selectedNode.config.task_instructions ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { task_instructions: event.target.value })} /></label> : null}{selectedNode.step_type === "human_wait" ? <label>Required input<textarea rows={3} value={String(selectedNode.config.required_input ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { required_input: event.target.value })} /></label> : null}{selectedNode.step_type === "report" ? <div className="workflow-step-grid"><label>Input artifact key<input value={String(selectedNode.config.input_artifact_key ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { input_artifact_key: event.target.value })} /></label><label>Template<select value={String(selectedNode.config.template_id ?? "two_column")} onChange={(event) => patchConfig(selectedNode.step_key, { template_id: event.target.value })}><option value="two_column">Two column</option><option value="blank_markdown">Blank Markdown</option></select></label></div> : null}<div className="studio-route-settings">{routes.filter((route) => route.source_step_key === selectedNode.step_key).map((route, index) => <div key={`${route.target_step_key}-${index}`}><span>→ {nodes.find((node) => node.step_key === route.target_step_key)?.name}</span><select value={route.condition} onChange={(event) => setRoutes((current) => current.map((item) => item === route ? { ...item, condition: event.target.value as WorkflowRouteCondition } : item))}><option value="success">success</option><option value="failure">failure</option><option value="input_available">input available</option><option value="always">always</option></select><button type="button" aria-label="Remove connection" onClick={() => setRoutes((current) => current.filter((item) => item !== route))}>×</button></div>)}</div></section> : null}
@@ -344,5 +408,6 @@ export function WorkflowStudioPage() {
     </main>
     {runWorkflow ? <div className="modal-backdrop"><div className="box modal workflow-studio-runner"><div className="panel-head"><div><h2>{runWorkflow.name}</h2><p>Run and monitor this workflow.</p></div><button className="icon-close" type="button" onClick={() => { setRunWorkflow(null); setActiveRun(null); }}>×</button></div>{!activeRun ? <form className="stack" onSubmit={startRun}><label>Initial request<textarea rows={5} required value={runInput} onChange={(event) => setRunInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !running) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Describe the task and provide the initial workflow input." /></label><div className="workflow-run-attachment"><label className="btn attachment-button">Attach PDF<input type="file" accept="application/pdf,.pdf" disabled={running} onChange={(event) => setRunFile(event.target.files?.[0] ?? null)} /></label>{runFile ? <span className="pending-attachment">{runFile.name}<button type="button" onClick={() => setRunFile(null)}>×</button></span> : null}</div><button className="btn btn-primary" disabled={running}>{running ? "Starting..." : "Start workflow"}</button></form> : <div className="stack"><div className={`workflow-run-summary status-${activeRun.status}`}><span><strong>{activeRun.status === "waiting" ? "Waiting for human input" : activeRun.status}</strong><small>{completedSteps} of {runWorkflow.steps.length} steps completed</small></span><strong>{runProgress}%</strong></div><div className="workflow-progress"><span style={{ width: `${runProgress}%` }} /></div><ol className="workflow-run-steps">{[...runWorkflow.steps].sort((a, b) => a.position - b.position).map((definition) => { const stepRun = activeRun.step_runs.find((step) => step.step_key === definition.step_key); const status = stepRun?.status ?? "pending"; return <li className={`run-step status-${status}`} key={definition.id}><span className="run-step-marker" /><span><strong>{definition.name}</strong><small>{definition.step_type.replace("_", " ")} · {status}</small>{stepRun?.error ? <small className="run-step-error">{stepRun.error}</small> : null}</span>{stepRun?.api_cost_usd ? <small>${stepRun.api_cost_usd.toFixed(6)}</small> : null}</li>; })}</ol>{activeRun.artifacts.length ? <section className="studio-run-artifacts"><h3>Artifacts</h3>{activeRun.artifacts.map((artifact) => <details key={artifact.id}><summary>{artifact.name}</summary><pre>{JSON.stringify(artifact.data, null, 2)}</pre></details>)}</section> : null}{activeRun.status === "waiting" ? <form className="human-wait-form" onSubmit={resumeRun}><label>{requiredHumanInput}<textarea rows={4} required value={humanInput} onChange={(event) => setHumanInput(event.target.value)} /></label><button className="btn btn-primary" disabled={running}>{running ? "Continuing..." : "Continue workflow"}</button></form> : null}{activeRun.status === "failed" ? <p className="error">{activeRun.error}</p> : null}{activeRun.status === "completed" ? <details className="workflow-result"><summary><strong>Final output</strong><span>View</span></summary><pre>{JSON.stringify(activeRun.output_data.last_output ?? activeRun.output_data, null, 2)}</pre></details> : null}<p className="workflow-run-cost">API cost: ${activeRun.total_api_cost_usd.toFixed(6)}</p></div>}</div></div> : null}
     {pendingDelete ? <div className="modal-backdrop"><div className="box modal"><h2>Delete workflow?</h2><p><strong>{pendingDelete.name}</strong> and all its node connections will be deleted. The agents themselves will remain available.</p><div className="modal-actions"><button className="btn" type="button" onClick={() => setPendingDelete(null)}>Cancel</button><button className="btn btn-danger" type="button" onClick={() => void deleteWorkflow()}>Delete</button></div></div></div> : null}
+    {artifactPreview ? <div className="modal-backdrop studio-artifact-preview"><div className="box modal"><div className="panel-head"><div><h2>{artifactPreview.name}</h2><p>{artifactPreview.artifact_type.replace("_", " ")}</p></div><button type="button" className="icon-close" onClick={() => setArtifactPreview(null)}>×</button></div><div className="studio-artifact-scroll"><ArtifactMarkdown data={artifactPreview.data} /></div></div></div> : null}
   </div>;
 }

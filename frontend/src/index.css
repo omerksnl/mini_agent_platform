@@ -1559,6 +1559,18 @@ input[type="range"] {
 .studio-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .studio-edges path { fill: none; stroke: var(--primary); stroke-width: 2; }
 .studio-edges marker path { fill: var(--primary); stroke: none; }
+.studio-edge-path.status-pending { stroke: #d5b3b4; }
+.studio-edge-path.status-running { stroke: var(--primary); }
+.studio-edge-path.status-waiting { stroke: #d59635; }
+.studio-edge-path.status-completed { stroke: #49a77b; opacity: .42; }
+.studio-edge-path.status-failed { stroke: #8f2327; opacity: .42; }
+.studio-edge-path.taken { opacity: 1; stroke-width: 4; stroke-dasharray: 10 7; animation: workflow-route-flow .8s linear infinite; }
+.studio-edges .marker-pending path { fill: #d5b3b4; }
+.studio-edges .marker-running path { fill: var(--primary); }
+.studio-edges .marker-waiting path { fill: #d59635; }
+.studio-edges .marker-completed path { fill: #49a77b; }
+.studio-edges .marker-failed path { fill: #8f2327; }
+@keyframes workflow-route-flow { to { stroke-dashoffset: -17; } }
 .studio-edge-control { position: absolute; z-index: 3; transform: translate(-50%, -50%); }
 .studio-edge-trigger { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 3px solid var(--box); border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 2px var(--primary), 0 2px 5px rgba(0,0,0,.18); cursor: pointer; }
 .studio-edge-trigger span { width: 6px; height: 6px; border-radius: 50%; background: var(--white); }
@@ -1579,6 +1591,25 @@ input[type="range"] {
 .studio-node.human_wait { border-top-color: #d59635; }
 .studio-node.report { border-top-color: #6681a3; }
 .studio-node small { color: var(--muted); text-transform: capitalize; }
+.studio-node.execution-pending { border-top-color: #d5b3b4; opacity: .72; cursor: default; }
+.studio-node.execution-running { border-top-color: var(--primary); background: #fff7f7; animation: workflow-node-running 1s ease-in-out infinite alternate; cursor: default; }
+.studio-node.execution-waiting { border-top-color: #d59635; background: #fffaf0; cursor: default; }
+.studio-node.execution-completed { border-color: #87c4a5; border-top-color: #49a77b; background: #f1faf5; cursor: pointer; }
+.studio-node.execution-failed { border-color: #b14a4e; border-top-color: #8f2327; background: #fff0f0; cursor: pointer; }
+.studio-node[class*="execution-"] .node-port { pointer-events: none; opacity: .45; }
+@keyframes workflow-node-running { to { box-shadow: 0 0 0 5px rgba(224,82,86,.14); } }
+.node-artifact-action, .node-download-action { position: absolute; left: 50%; bottom: -26px; z-index: 5; min-width: 92px; padding: 4px 8px; transform: translateX(-50%); border: 1px solid #87c4a5; border-radius: 12px; color: #2f7554; background: #fff; font-size: .55rem; cursor: pointer; }
+.node-download-action { bottom: -51px; border-color: #6681a3; color: #496783; }
+.node-human-input { position: absolute; top: 103px; left: 50%; z-index: 8; width: 280px; display: grid; gap: 7px; padding: 10px; transform: translateX(-50%); border: 1px solid #d59635; border-radius: 8px; background: #fffaf0; box-shadow: 0 7px 18px rgba(0,0,0,.16); text-align: left; user-select: text; }
+.node-human-input label { font-size: .6rem; }
+.node-human-input textarea { margin-top: 5px; resize: vertical; }
+.studio-execution-bar { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; gap: 14px; align-items: center; padding: 9px 12px; border-left: 4px solid var(--primary); border-radius: 7px; background: #f7f7f7; }
+.studio-execution-bar > span { display: grid; gap: 2px; min-width: 190px; text-transform: capitalize; }
+.studio-execution-bar small { color: var(--muted); }
+.studio-execution-bar.status-completed { border-left-color: #49a77b; background: #f1faf5; }
+.studio-execution-bar.status-failed { border-left-color: #8f2327; background: #fff0f0; }
+.studio-execution-bar.status-waiting { border-left-color: #d59635; background: #fffaf0; }
+.workflow-studio-main:has(.studio-execution-bar) { position: fixed; inset: 18px; z-index: 1001; grid-template-rows: auto auto minmax(430px,1fr) auto; overflow: auto; box-shadow: 0 16px 45px rgba(0,0,0,.28); }
 .node-port { position: absolute; top: 50%; width: 16px; height: 16px; padding: 0; transform: translateY(-50%); border: 3px solid var(--box); border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 1px var(--primary); cursor: crosshair; }
 .node-port.input { left: -8px; }
 .node-port.output { right: -8px; }
@@ -1601,6 +1632,12 @@ input[type="range"] {
 .studio-run-artifacts details { overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: var(--box); }
 .studio-run-artifacts summary { padding: 8px 10px; cursor: pointer; }
 .studio-run-artifacts pre, .workflow-studio-runner .workflow-result pre { max-height: 260px; overflow: auto; margin: 0; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.studio-artifact-preview { z-index: 1100; }
+.studio-artifact-preview .modal { width: min(850px, calc(100vw - 40px)); max-height: calc(100vh - 50px); overflow: auto; }
+.studio-artifact-scroll { max-height: 65vh; overflow: auto; padding: 14px 18px; border: 1px solid var(--line); border-radius: 6px; background: #f8f8f8; }
+.studio-artifact-scroll .workflow-artifact-content { min-width: 0; overflow-wrap: anywhere; }
+.studio-artifact-scroll .workflow-artifact-content > :first-child { margin-top: 0; }
+.studio-artifact-scroll .workflow-artifact-content > :last-child { margin-bottom: 0; }
 
 @media (max-width: 980px) {
   .workflow-studio-shell { grid-template-columns: 1fr; }
