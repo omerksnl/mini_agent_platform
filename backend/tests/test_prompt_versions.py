@@ -1,4 +1,10 @@
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
+
+from app.core.services.agent_service import AgentService
+from app.core.services.prompt_optimization_service import PromptOptimizationService
 
 
 def register(client: TestClient, email: str, tenant_name: str) -> dict[str, str]:
@@ -82,3 +88,60 @@ def test_restore_creates_a_new_current_version_and_is_tenant_isolated(client: Te
     current = next(item for item in restored_versions if item["is_current"])
     assert current["version_number"] == 1
     assert current["system_prompt"] == "Original prompt"
+
+
+def test_prompt_versions_can_be_evaluated_without_calling_a_real_model(
+    client: TestClient, monkeypatch
+) -> None:
+    headers = register(client, "evaluate@example.com", "Evaluation Tenant")
+    agent = create_agent(client, headers, "Ground every answer in supplied evidence.")
+
+    def fake_evaluate(self, agent_id, tenant_id):
+        versions = AgentService(self.db).list_prompt_versions(agent_id, tenant_id)
+        versions[0].evaluation = {
+            "score": 9,
+        }
+        versions[0].evaluated_at = datetime.now(timezone.utc)
+        self.db.commit()
+        return versions, 0.00125
+
+    monkeypatch.setattr(PromptOptimizationService, "evaluate_versions", fake_evaluate)
+    response = client.post(
+        f"/api/agents/{agent['id']}/prompt-versions/evaluate", headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["api_cost_usd"] == 0.00125
+    assert response.json()["versions"][0]["evaluation"]["score"] == 9
+    assert response.json()["versions"][0]["evaluated_at"] is not None
+
+
+def test_create_with_ai_returns_a_draft_and_does_not_create_a_version(
+    client: TestClient, monkeypatch
+) -> None:
+    headers = register(client, "improve@example.com", "Improve Tenant")
+    agent = create_agent(client, headers, "Answer questions.")
+
+    def fake_improve(self, agent_id, tenant_id, draft_prompt):
+        AgentService(self.db).get_agent(agent_id, tenant_id)
+        assert draft_prompt == "Answer questions."
+        return SimpleNamespace(
+            improved_prompt="Answer using only supplied evidence.",
+            rationale=["Added an evidence boundary"],
+        ), 0.0025
+
+    monkeypatch.setattr(PromptOptimizationService, "improve_prompt", fake_improve)
+    response = client.post(
+        f"/api/agents/{agent['id']}/prompt-improvements",
+        headers=headers,
+        json={"draft_prompt": "Answer questions."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["improved_prompt"] == "Answer using only supplied evidence."
+    assert response.json()["api_cost_usd"] == 0.0025
+    versions = client.get(
+        f"/api/agents/{agent['id']}/prompt-versions", headers=headers
+    ).json()
+    assert len(versions) == 1
+    assert versions[0]["system_prompt"] == "Answer questions."

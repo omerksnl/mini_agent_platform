@@ -920,8 +920,9 @@ input[type="range"] {
 
 .prompt-version > summary {
   cursor: pointer;
-  display: grid;
-  gap: 0.35rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
   min-width: 0;
   list-style: none;
 }
@@ -934,18 +935,28 @@ input[type="range"] {
   display: flex;
   align-items: baseline;
   gap: 0.6rem;
+  flex: 0 0 auto;
 }
 
 .prompt-version small {
   color: var(--muted);
 }
 
-.prompt-version-preview {
-  display: block;
-  color: var(--text);
+.prompt-version-inline-score {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  color: var(--primary);
+  font-size: 0.76rem;
+  font-weight: 700;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.prompt-version-inline-score.pending {
+  border-color: var(--line);
+  color: var(--muted);
 }
 
 .prompt-version-content {
@@ -966,6 +977,93 @@ input[type="range"] {
 
 .prompt-version > .btn {
   width: 100%;
+}
+
+.prompt-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.prompt-ai-actions .btn {
+  flex: 0 0 auto;
+}
+
+.prompt-ai-rationale,
+.prompt-evaluation {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input-bg);
+}
+
+.prompt-ai-rationale ul,
+.prompt-evaluation ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.15rem;
+}
+
+.prompt-evaluation {
+  display: block;
+}
+
+.prompt-score-overall {
+  display: grid;
+  place-content: center;
+  width: 140px;
+  min-height: 76px;
+  border-radius: 4px;
+  background: var(--primary);
+  color: #fff;
+  text-align: center;
+}
+
+.prompt-score-overall strong {
+  font-size: 1.45rem;
+}
+
+.prompt-score-overall span {
+  font-size: 0.7rem;
+}
+
+.prompt-score-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.prompt-score-grid span {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  font-size: 0.76rem;
+}
+
+.prompt-evaluation-notes {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 680px) {
+  .prompt-ai-actions,
+  .prompt-evaluation {
+    display: grid;
+  }
+
+  .prompt-score-grid,
+  .prompt-evaluation-notes {
+    grid-template-columns: 1fr;
+  }
 }
 
 .modal-backdrop {

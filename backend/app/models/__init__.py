@@ -212,6 +212,8 @@ class AgentPromptVersion(Base):
     )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     agent: Mapped[Agent] = relationship(

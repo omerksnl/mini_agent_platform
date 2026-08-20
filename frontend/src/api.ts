@@ -140,6 +140,11 @@ export type AgentPromptVersion = {
   system_prompt: string;
   created_at: string;
   is_current: boolean;
+  evaluation: {
+    score?: number;
+    overall?: number;
+  } | null;
+  evaluated_at: string | null;
 };
 export type WorkflowRouteInput = {
   source_step_key: string;
@@ -288,6 +293,18 @@ export const api = {
     return request<Agent>(`/api/agents/${id}/prompt-versions/${versionId}/restore`, {
       method: "POST",
     });
+  },
+  evaluateAgentPromptVersions(id: string) {
+    return request<{ versions: AgentPromptVersion[]; api_cost_usd: number }>(
+      `/api/agents/${id}/prompt-versions/evaluate`,
+      { method: "POST" },
+    );
+  },
+  improveAgentPrompt(id: string, draftPrompt: string) {
+    return request<{ improved_prompt: string; rationale: string[]; api_cost_usd: number }>(
+      `/api/agents/${id}/prompt-improvements`,
+      { method: "POST", body: JSON.stringify({ draft_prompt: draftPrompt }) },
+    );
   },
   deleteAgent(id: string) {
     return request<void>(`/api/agents/${id}`, { method: "DELETE" });

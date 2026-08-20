@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -77,3 +77,20 @@ class AgentPromptVersionResponse(BaseModel):
     system_prompt: str
     created_at: datetime
     is_current: bool
+    evaluation: dict[str, Any] | None = None
+    evaluated_at: datetime | None = None
+
+
+class PromptEvaluationBatchResponse(BaseModel):
+    versions: list[AgentPromptVersionResponse]
+    api_cost_usd: float
+
+
+class PromptImproveRequest(BaseModel):
+    draft_prompt: str = Field(max_length=50000)
+
+
+class PromptImproveResponse(BaseModel):
+    improved_prompt: str
+    rationale: list[str]
+    api_cost_usd: float

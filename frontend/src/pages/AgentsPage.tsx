@@ -271,7 +271,7 @@ export function AgentsPage() {
                     onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
                   />
                 </label>
-                {mode === "edit" && editingId ? <PromptVersionHistory agentId={editingId} onRestored={(agent) => {
+                {mode === "edit" && editingId ? <PromptVersionHistory agentId={editingId} currentPrompt={form.system_prompt} onDraftCreated={(prompt) => setForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => {
                   setForm((current) => ({ ...current, system_prompt: agent.system_prompt }));
                   void loadAgents();
                 }} /> : null}
