@@ -7,7 +7,7 @@ from app.api.deps import get_llm_client
 from app.core.services.a2a_service import A2AError, A2AService
 from app.core.services.llm_service import LLMClient
 from app.db.session import get_db
-from app.schemas.a2a import A2AJsonRpcRequest
+from app.schemas.a2a import A2AFilePart, A2AJsonRpcRequest, A2ATextPart
 
 
 router = APIRouter(prefix="/a2a/agents", tags=["a2a"])
@@ -77,7 +77,7 @@ def get_agent_card(
             }
         },
         "securityRequirements": [{"schemes": {"bearerAuth": {"list": []}}}],
-        "defaultInputModes": ["text/plain"],
+        "defaultInputModes": ["text/plain"] + (["application/pdf"] if "pdf_to_text" in agent.system_tools else []),
         "defaultOutputModes": ["text/plain"],
         "skills": advertised_skills,
     }
@@ -115,8 +115,15 @@ def send_a2a_message(
         service = A2AService(db)
         agent = service.get_published(agent_id)
         service.authenticate(agent, _bearer_token(authorization))
-        text = "\n".join(part.text for part in payload.params.message.parts).strip()
-        content, _cost = service.invoke(agent, text, llm_client)
+        text = "\n".join(part.text for part in payload.params.message.parts if isinstance(part, A2ATextPart)).strip()
+        attachments = [
+            service.create_received_pdf(agent, part.file.name, part.file.mimeType, part.file.bytes)
+            for part in payload.params.message.parts
+            if isinstance(part, A2AFilePart)
+        ]
+        if not text:
+            text = "Process the attached PDF."
+        content, api_cost = service.invoke(agent, text, llm_client, attachments)
     except A2AError as exc:
         _raise_a2a_error(exc)
     context_id = payload.params.message.contextId or str(uuid4())
@@ -129,5 +136,6 @@ def send_a2a_message(
             "messageId": str(uuid4()),
             "contextId": context_id,
             "parts": [{"kind": "text", "text": content}],
+            "metadata": {"apiCostUsd": api_cost},
         },
     }

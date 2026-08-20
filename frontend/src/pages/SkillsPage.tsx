@@ -1,8 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 
 import { api, type HttpTool, type Skill, type SkillInput } from "../api";
-import { useAuth } from "../AuthContext";
+import { AppHeader } from "../components/AppHeader";
 
 type SkillForm = Omit<SkillInput, "output_schema"> & { outputSchemaText: string };
 type PanelMode = "idle" | "create" | "edit";
@@ -18,7 +17,6 @@ const emptyForm: SkillForm = {
 };
 
 export function SkillsPage() {
-  const { me, logout } = useAuth();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [tools, setTools] = useState<HttpTool[]>([]);
   const [form, setForm] = useState<SkillForm>(emptyForm);
@@ -121,13 +119,7 @@ export function SkillsPage() {
 
   return (
     <div className="app-shell">
-      <header className="box topbar">
-        <div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div>
-        <div className="topbar-actions">
-          <Link className="btn" to="/">Agents</Link><Link className="btn" to="/chat">Chat</Link>
-          <Link className="btn" to="/tools">Tools</Link><Link className="btn" to="/workflows">Workflows</Link><button className="btn" onClick={logout}>Sign out</button>
-        </div>
-      </header>
+      <AppHeader />
       <main className="layout">
         <section className="box panel">
           <div className="panel-head"><h1>Skills</h1><button className="btn btn-primary" onClick={startCreate}>New skill</button></div>

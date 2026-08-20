@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api.routes import a2a, agents, attachments, auth, collections, conversations, feedback, generated_files, skills, tools, workflows
+from app.api.routes import a2a, agents, attachments, auth, collections, conversations, feedback, generated_files, remote_agents, skills, tools, workflows
 from app.config import get_settings
 from app.core.cache import redis_is_ready
 from app.db.session import get_db
@@ -30,6 +30,7 @@ app.include_router(generated_files.router, prefix="/api")
 app.include_router(collections.router, prefix="/api")
 app.include_router(workflows.router, prefix="/api")
 app.include_router(feedback.router, prefix="/api")
+app.include_router(remote_agents.router, prefix="/api")
 app.include_router(a2a.router)
 
 

@@ -1,10 +1,13 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-import { api, type Agent, type AgentInput, type Collection, type HttpTool, type Skill } from "../api";
-import { useAuth } from "../AuthContext";
+import { api, type Agent, type AgentInput, type Collection, type HttpTool, type RemoteAgent, type Skill } from "../api";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
+import { A2APublishing } from "../components/A2APublishing";
+import { AppHeader } from "../components/AppHeader";
 
 const emptyForm: AgentInput = {
   name: "",
@@ -20,12 +23,13 @@ const emptyForm: AgentInput = {
   router_target_ids: [],
 };
 
-type PanelMode = "idle" | "create" | "edit";
+type PanelMode = "idle" | "create" | "edit" | "remote";
+type RemoteMessage = { role: "user" | "agent"; content: string; attachmentName?: string; apiCostUsd?: number };
 
 export function AgentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { me, logout } = useAuth();
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [remoteAgents, setRemoteAgents] = useState<RemoteAgent[]>([]);
   const [tools, setTools] = useState<HttpTool[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -37,16 +41,26 @@ export function AgentsPage() {
   const [saving, setSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Agent | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showRemoteForm, setShowRemoteForm] = useState(false);
+  const [remoteCardUrl, setRemoteCardUrl] = useState("");
+  const [remoteApiKey, setRemoteApiKey] = useState("");
+  const [savingRemote, setSavingRemote] = useState(false);
+  const [selectedRemote, setSelectedRemote] = useState<RemoteAgent | null>(null);
+  const [remoteDraft, setRemoteDraft] = useState("");
+  const [remoteMessages, setRemoteMessages] = useState<RemoteMessage[]>([]);
+  const [sendingRemote, setSendingRemote] = useState(false);
+  const [remotePdf, setRemotePdf] = useState<File | null>(null);
 
   async function loadAgents() {
     setLoading(true);
     setError("");
     try {
-      const [agentList, toolList, skillList, collectionList] = await Promise.all([api.listAgents(), api.listTools(), api.listSkills(), api.listCollections()]);
+      const [agentList, toolList, skillList, collectionList, remoteList] = await Promise.all([api.listAgents(), api.listTools(), api.listSkills(), api.listCollections(), api.listRemoteAgents()]);
       setAgents(agentList);
       setTools(toolList);
       setSkills(skillList);
       setCollections(collectionList);
+      setRemoteAgents(remoteList);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load agents");
     } finally {
@@ -73,6 +87,7 @@ export function AgentsPage() {
   }
 
   function startCreate() {
+    setSelectedRemote(null);
     setMode("create");
     setEditingId(null);
     setForm(emptyForm);
@@ -80,6 +95,7 @@ export function AgentsPage() {
   }
 
   function startEdit(agent: Agent) {
+    setSelectedRemote(null);
     setMode("edit");
     setEditingId(agent.id);
     setForm({
@@ -138,45 +154,101 @@ export function AgentsPage() {
     }
   }
 
+  async function connectRemote(event: FormEvent) {
+    event.preventDefault();
+    setSavingRemote(true);
+    setError("");
+    try {
+      const remote = await api.createRemoteAgent(remoteCardUrl.trim(), remoteApiKey.trim());
+      setRemoteAgents((current) => [remote, ...current]);
+      setRemoteCardUrl("");
+      setRemoteApiKey("");
+      setShowRemoteForm(false);
+      openRemote(remote);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Remote agent could not be connected");
+    } finally {
+      setSavingRemote(false);
+    }
+  }
+
+  function openRemote(remote: RemoteAgent) {
+    setSelectedRemote(remote);
+    setMode("remote");
+    setEditingId(null);
+    setRemoteMessages([]);
+    setRemoteDraft("");
+    setRemotePdf(null);
+    setError("");
+  }
+
+  async function removeRemote(remote: RemoteAgent) {
+    setError("");
+    try {
+      await api.deleteRemoteAgent(remote.id);
+      setRemoteAgents((current) => current.filter((item) => item.id !== remote.id));
+      if (selectedRemote?.id === remote.id) {
+        setSelectedRemote(null);
+        setMode("idle");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Remote agent could not be removed");
+    }
+  }
+
+  async function sendRemote(event: FormEvent) {
+    event.preventDefault();
+    const content = remoteDraft.trim();
+    const pdf = remotePdf;
+    if (!selectedRemote || (!content && !pdf) || sendingRemote) return;
+    setRemoteDraft("");
+    setRemotePdf(null);
+    setSendingRemote(true);
+    setError("");
+    setRemoteMessages((current) => [...current, { role: "user", content, attachmentName: pdf?.name }]);
+    try {
+      const attachment = pdf ? await api.uploadAttachment(pdf) : null;
+      const response = await api.sendRemoteAgentMessage(selectedRemote.id, content, attachment ? [attachment.id] : []);
+      setRemoteMessages((current) => [...current, { role: "agent", content: response.content, apiCostUsd: response.api_cost_usd }]);
+    } catch (err) {
+      setRemoteDraft(content);
+      setRemotePdf(pdf);
+      setError(err instanceof Error ? err.message : "Remote agent request failed");
+    } finally {
+      setSendingRemote(false);
+    }
+  }
+
+  function remoteEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  }
+
   const displayedAgents = [...agents].sort((left, right) => {
     const typeOrder = { supervisor: 0, router: 1, normal: 2 } as const;
     if (left.agent_type !== right.agent_type) return typeOrder[left.agent_type] - typeOrder[right.agent_type];
     return left.name.localeCompare(right.name);
   });
+  const editingAgent = editingId ? agents.find((agent) => agent.id === editingId) ?? null : null;
 
   return (
     <div className="app-shell">
-      <header className="box topbar">
-        <div>
-          <p className="brand">Mini Agent</p>
-          <p className="workspace">
-            {me?.tenant_name} · {me?.user.full_name}
-          </p>
-        </div>
-        <div className="topbar-actions">
-          <Link className="btn btn-primary" to="/chat">Chat</Link>
-          <Link className="btn" to="/tools">Tools</Link>
-          <Link className="btn" to="/skills">Skills</Link>
-          <Link className="btn" to="/collections">Collections</Link>
-          <Link className="btn" to="/multi-agent">Multi-agent</Link>
-          <Link className="btn" to="/workflows">Workflows</Link>
-          <button type="button" className="btn" onClick={logout}>
-            Sign out
-          </button>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="layout">
         <section className="box panel">
           <div className="panel-head">
             <h1>Agents</h1>
-            <button type="button" className="btn btn-primary" onClick={startCreate}>New agent</button>
+            <div className="panel-head-actions"><button type="button" className="btn" onClick={() => { setShowRemoteForm(true); setError(""); }}>Add remote</button><button type="button" className="btn btn-primary" onClick={startCreate}>New agent</button></div>
           </div>
           {loading ? <p>Loading...</p> : null}
           {!loading && agents.length === 0 ? (
             <p>No agents yet. Use New agent to create one.</p>
           ) : null}
-          <ul className="agent-list agent-tree">
+          <div className="agent-section-label"><span>Local agents</span><strong>{displayedAgents.length}</strong></div>
+          <ul className="agent-list agent-tree compact-agent-list">
             {displayedAgents.map((agent) => (
               <li key={agent.id} className={`agent-tree-row ${editingId === agent.id ? "active" : ""}`}>
                 {agent.agent_type !== "normal" ? <Link className="agent-item" to={`/multi-agent?mode=${agent.agent_type}&edit=${agent.id}`}>
@@ -186,10 +258,15 @@ export function AgentsPage() {
                   <span className="agent-name-line"><strong>{agent.name}</strong><span className="agent-type-badge">Agent</span></span>
                   <span className="agent-meta">{agent.model} · t={agent.temperature}</span>
                 </button>}
-                <button type="button" className="btn btn-danger" onClick={() => setPendingDelete(agent)}>Delete</button>
+                <button type="button" className="agent-delete-compact" title={`Delete ${agent.name}`} aria-label={`Delete ${agent.name}`} onClick={() => setPendingDelete(agent)}>×</button>
               </li>
             ))}
           </ul>
+          <div className="remote-agent-heading"><div><h2>Remote agents</h2><p>Agents connected through A2A.</p></div><span>{remoteAgents.length}</span></div>
+          {remoteAgents.length ? <ul className="agent-list remote-agent-list">{remoteAgents.map((remote) => <li key={remote.id} className={selectedRemote?.id === remote.id ? "active" : ""}>
+            <button type="button" className="agent-item" onClick={() => openRemote(remote)}><span className="agent-name-line"><strong>{remote.name}</strong><span className="agent-type-badge remote">A2A</span></span><span className="agent-meta">Remote · protocol {remote.protocol_version}</span></button>
+            <button type="button" className="btn btn-danger" onClick={() => void removeRemote(remote)}>Remove</button>
+          </li>)}</ul> : <p className="field-hint">Connect an Agent Card to use an agent published by another account.</p>}
         </section>
 
         <section className="box panel">
@@ -197,6 +274,25 @@ export function AgentsPage() {
             <div className="idle-panel">
               <p className="idle-title">Start your journey here</p>
               <p>Create a new agent or select one to edit.</p>
+            </div>
+          ) : mode === "remote" && selectedRemote ? (
+            <div className="remote-agent-workspace">
+              <div className="panel-accent"><div className="panel-head"><div><h1>{selectedRemote.name}</h1><p>Remote A2A agent · {selectedRemote.protocol_version}</p></div><button type="button" className="icon-close" onClick={() => { setSelectedRemote(null); setMode("idle"); }}>×</button></div></div>
+              <div className="remote-agent-card-summary"><p>{selectedRemote.description}</p><div><span>Agent Card</span><code>{selectedRemote.agent_card_url}</code></div>{selectedRemote.skills.length ? <div className="remote-skill-list">{selectedRemote.skills.map((skill, index) => <span key={skill.id ?? index}>{skill.name ?? "Capability"}</span>)}</div> : null}</div>
+              <div className="remote-message-thread">
+                {!remoteMessages.length ? <div className="idle-panel"><p className="idle-title">Send a task through A2A</p><p>This message and any attached PDF are delivered to the remote account's agent.</p></div> : remoteMessages.map((message, index) => <div className={`remote-message ${message.role}`} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : selectedRemote.name}</strong>{message.attachmentName ? <span className="remote-pdf-chip">PDF · {message.attachmentName}</span> : null}{message.role === "agent" ? <><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div><span className="remote-message-cost">API cost: ${Number(message.apiCostUsd ?? 0).toFixed(6)}</span></> : message.content ? <p>{message.content}</p> : null}</div>)}
+                {sendingRemote ? <div className="remote-message agent"><strong>{selectedRemote.name}</strong><p>Working through A2A...</p></div> : null}
+              </div>
+              <form className="remote-composer" onSubmit={sendRemote}>
+                <label className="remote-attach-button" title="Attach a PDF file" aria-label="Attach a PDF file">+
+                  <input type="file" accept="application/pdf,.pdf" disabled={sendingRemote} onChange={(event) => { setRemotePdf(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
+                </label>
+                <div className="remote-composer-input">
+                  <textarea rows={3} value={remoteDraft} onChange={(event) => setRemoteDraft(event.target.value)} onKeyDown={remoteEnter} placeholder="Send a task to this remote agent..." disabled={sendingRemote} />
+                  {remotePdf ? <span className="pending-attachment">{remotePdf.name}<button type="button" onClick={() => setRemotePdf(null)} aria-label="Remove attachment">×</button></span> : null}
+                </div>
+                <button className="btn btn-primary btn-large" disabled={sendingRemote || (!remoteDraft.trim() && !remotePdf)}>{sendingRemote ? "Sending..." : "Send task"}</button>
+              </form>
             </div>
           ) : (
             <>
@@ -271,10 +367,12 @@ export function AgentsPage() {
                     onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
                   />
                 </label>
-                {mode === "edit" && editingId ? <PromptVersionHistory agentId={editingId} currentPrompt={form.system_prompt} onDraftCreated={(prompt) => setForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => {
+                {mode === "edit" && editingId ? <details className="agent-config-section"><summary><span>Prompt history & evaluation</span><small>Versions, scoring, and AI-assisted drafts</small></summary><div className="agent-config-content"><PromptVersionHistory agentId={editingId} currentPrompt={form.system_prompt} onDraftCreated={(prompt) => setForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => {
                   setForm((current) => ({ ...current, system_prompt: agent.system_prompt }));
                   void loadAgents();
-                }} /> : null}
+                }} /></div></details> : null}
+                {editingAgent ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this agent securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingAgent} onChanged={loadAgents} /></div></details> : null}
+                <details className="agent-config-section"><summary><span>Capabilities & knowledge</span><small>{form.system_tools.length + form.tool_ids.length} tools · {form.skill_ids.length} skills · {form.collection_ids.length} collections</small></summary><div className="agent-config-content capability-config-grid">
                 <fieldset className="tool-picker">
                   <legend>Tools</legend>
                   <span className="field-hint">The agent can only call selected tools.</span>
@@ -347,6 +445,7 @@ export function AgentsPage() {
                   ))}
                   {skills.length === 0 ? <Link className="field-hint" to="/skills">Create a skill</Link> : null}
                 </fieldset>
+                </div></details>
                 <button
                   type="submit"
                   className="btn btn-primary btn-large btn-block"
@@ -399,6 +498,7 @@ export function AgentsPage() {
           </div>
         </div>
       ) : null}
+      {showRemoteForm ? <div className="modal-backdrop" onClick={() => !savingRemote && setShowRemoteForm(false)}><form className="box modal remote-connect-modal" onSubmit={connectRemote} onClick={(event) => event.stopPropagation()}><h2>Connect remote A2A agent</h2><p>Paste the Agent Card URL and the API key supplied by the publishing account.</p><label>Agent Card URL<input type="url" required value={remoteCardUrl} onChange={(event) => setRemoteCardUrl(event.target.value)} placeholder="https://example.com/a2a/agents/.../.well-known/agent-card.json" /></label><label>A2A API key<input type="password" required value={remoteApiKey} onChange={(event) => setRemoteApiKey(event.target.value)} placeholder="a2a_..." /></label><span className="field-hint">The card is verified without calling the model. The API key is encrypted before storage.</span><div className="modal-actions"><button type="button" className="btn" disabled={savingRemote} onClick={() => setShowRemoteForm(false)}>Cancel</button><button className="btn btn-primary" disabled={savingRemote}>{savingRemote ? "Connecting..." : "Connect agent"}</button></div></form></div> : null}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import base64
 
 from app.api.deps import get_llm_client
 from app.core.services.llm_service import LLMResult
@@ -89,6 +90,7 @@ def test_published_agent_exposes_card_and_accepts_authenticated_message(client: 
     assert body["id"] == "request-1"
     assert body["result"]["role"] == "agent"
     assert body["result"]["parts"][0]["text"] == "A2A lets independent agents exchange tasks."
+    assert body["result"]["metadata"]["apiCostUsd"] == 0.001
 
 
 def test_a2a_key_rotation_and_unpublish_invalidate_previous_access(client: TestClient) -> None:
@@ -114,3 +116,48 @@ def test_a2a_key_rotation_and_unpublish_invalidate_previous_access(client: TestC
     assert disabled.status_code == 200
     assert disabled.json()["a2a_enabled"] is False
     assert client.get(second["agent_card_url"]).status_code == 404
+
+
+def test_published_pdf_agent_receives_a2a_file_as_attachment(client: TestClient) -> None:
+    owner = register(client, "a2a-pdf@example.com", "A2A PDF")
+    created = client.post("/api/agents", headers=owner, json={
+        "name": "PDF Extractor",
+        "system_prompt": "Extract PDFs.",
+        "system_tools": ["pdf_to_text"],
+    })
+    assert created.status_code == 201, created.text
+    published = client.post(
+        f"/api/agents/{created.json()['id']}/a2a/publish",
+        headers=owner,
+        json={"description": "Extracts PDF documents."},
+    ).json()
+    assert "application/pdf" in client.get(published["agent_card_url"]).json()["defaultInputModes"]
+
+    class PdfLLM:
+        def complete(self, agent, messages, http_tools=None, attachments=None, db=None, **kwargs):
+            assert messages == [{"role": "user", "content": "Extract this CV"}]
+            assert len(attachments) == 1
+            assert attachments[0].original_name == "candidate.pdf"
+            return LLMResult(content="CandidateProfile created", used_tools=["pdf_to_text"], api_cost_usd=0.001)
+
+    payload = {
+        "jsonrpc": "2.0", "id": "pdf-request", "method": "SendMessage",
+        "params": {"message": {"role": "user", "parts": [
+            {"kind": "text", "text": "Extract this CV"},
+            {"kind": "file", "file": {
+                "name": "candidate.pdf", "mimeType": "application/pdf",
+                "bytes": base64.b64encode(b"%PDF-1.4\na2a inbound").decode("ascii"),
+            }},
+        ]}},
+    }
+    app.dependency_overrides[get_llm_client] = lambda: PdfLLM()
+    try:
+        response = client.post(
+            published["endpoint_url"],
+            headers={"Authorization": f"Bearer {published['api_key']}"},
+            json=payload,
+        )
+    finally:
+        app.dependency_overrides.pop(get_llm_client, None)
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["parts"][0]["text"] == "CandidateProfile created"

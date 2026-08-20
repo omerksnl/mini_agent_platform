@@ -49,6 +49,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key === "access_token") {
+        setLoading(true);
+        void refresh();
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [refresh]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       me,

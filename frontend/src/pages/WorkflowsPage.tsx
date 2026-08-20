@@ -3,10 +3,11 @@ import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type Agent, type AgentInput, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
-import { useAuth } from "../AuthContext";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
 import { HumanFeedback } from "../components/HumanFeedback";
+import { A2APublishing } from "../components/A2APublishing";
+import { AppHeader } from "../components/AppHeader";
 
 type CollectionMode = "off" | "search" | "full_context";
 type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; target_id: string; system_tool_name: string; required_input: string; task_instructions: string; collection_mode: CollectionMode; input_artifact_keys: string; max_output_tokens: string; report_input_key: string; report_template_id: "blank_markdown" | "two_column"; report_filename: string; report_title: string; next_condition: WorkflowRouteCondition };
@@ -94,7 +95,6 @@ function artifactKeyFor(name: string, existing: StepForm[]): string {
 
 export function WorkflowsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { me, logout } = useAuth();
   const [items, setItems] = useState<Workflow[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [form, setForm] = useState<Form>(blank);
@@ -330,9 +330,11 @@ export function WorkflowsPage() {
   const requiredHumanInput = typeof waitingStep?.config.required_input === "string" && waitingStep.config.required_input.trim()
     ? waitingStep.config.required_input.trim()
     : "Required human input";
+  const editingRouter = editingRouterId ? agents.find((agent) => agent.id === editingRouterId) ?? null : null;
+  const editingSupervisor = editingSupervisorId ? agents.find((agent) => agent.id === editingSupervisorId) ?? null : null;
 
   return <div className="app-shell">
-    <header className="box topbar"><div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div><div className="topbar-actions"><Link className="btn" to="/">Agents</Link><Link className="btn btn-primary" to="/multi-agent">Multi-agent</Link><Link className="btn" to="/workflows">Workflows</Link><Link className="btn" to="/chat">Chat</Link><button className="btn" onClick={logout}>Sign out</button></div></header>
+    <AppHeader />
     {error ? <p className="alert">{error}</p> : null}
     <section className="box execution-mode-panel">
       <div><h1>Multi-agent systems</h1><p>Choose how multiple agents coordinate for a task.</p></div>
@@ -377,13 +379,14 @@ export function WorkflowsPage() {
     </main> : null}
     {executionMode === "router" ? <main className="box panel">
       <div className="panel-head"><div><h1>Router systems</h1><p>A router selects exactly one normal agent for each request.</p></div><button className="btn btn-primary" type="button" onClick={() => { setEditingRouterId(null); setRouterForm(blankRouter); setShowRouterForm(true); setSearchParams({ mode: "router" }); }}>New router</button></div>
-      {showRouterForm ? <form className="stack supervisor-create-form" onSubmit={saveRouter}>
-        <div className="panel-head"><h2>{editingRouterId ? "Edit router" : "New router"}</h2><button type="button" className="icon-close" onClick={() => { setShowRouterForm(false); setEditingRouterId(null); setRouterForm(blankRouter); setSearchParams({ mode: "router" }); }}>×</button></div>
+      {showRouterForm ? <form className="stack supervisor-create-form multi-agent-edit-form" onSubmit={saveRouter}>
+        <div className="panel-accent multi-agent-form-accent"><div className="panel-head"><div><h2>{editingRouterId ? "Edit router" : "New router"}</h2><p>Model, routing instructions, targets, and sharing.</p></div><button type="button" className="icon-close" onClick={() => { setShowRouterForm(false); setEditingRouterId(null); setRouterForm(blankRouter); setSearchParams({ mode: "router" }); }}>×</button></div></div>
         <div className="workflow-step-grid"><label>Name<input required value={routerForm.name} onChange={(event) => setRouterForm({ ...routerForm, name: event.target.value })} /></label><label>Model<select value={routerForm.model} onChange={(event) => setRouterForm({ ...routerForm, model: event.target.value })}>{MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.provider}</option>)}</select></label></div>
         <label>Temperature ({routerForm.temperature.toFixed(1)})<input type="range" min={0} max={2} step={0.1} value={routerForm.temperature} onChange={(event) => setRouterForm({ ...routerForm, temperature: Number(event.target.value) })} /></label>
         <label>Routing instructions<textarea rows={6} required value={routerForm.system_prompt} onChange={(event) => setRouterForm({ ...routerForm, system_prompt: event.target.value })} /></label>
-        {editingRouterId ? <PromptVersionHistory agentId={editingRouterId} currentPrompt={routerForm.system_prompt} onDraftCreated={(prompt) => setRouterForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => { setRouterForm((current) => ({ ...current, system_prompt: agent.system_prompt })); void load(); }} /> : null}
-        <fieldset className="tool-picker"><legend>Target agents</legend><span className="field-hint">The router will select exactly one of these normal agents.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={routerForm.router_target_ids.includes(agent.id)} onChange={(event) => setRouterForm({ ...routerForm, router_target_ids: event.target.checked ? [...routerForm.router_target_ids, agent.id] : routerForm.router_target_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset>
+        {editingRouterId ? <details className="agent-config-section"><summary><span>Prompt history & evaluation</span><small>Versions, scoring, and AI-assisted drafts</small></summary><div className="agent-config-content"><PromptVersionHistory agentId={editingRouterId} currentPrompt={routerForm.system_prompt} onDraftCreated={(prompt) => setRouterForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => { setRouterForm((current) => ({ ...current, system_prompt: agent.system_prompt })); void load(); }} /></div></details> : null}
+        {editingRouter ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this router securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingRouter} onChanged={load} /></div></details> : null}
+        <details className="agent-config-section"><summary><span>Target agents</span><small>{routerForm.router_target_ids.length} selected</small></summary><div className="agent-config-content"><fieldset className="tool-picker"><legend>Available agents</legend><span className="field-hint">The router will select exactly one of these normal agents.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={routerForm.router_target_ids.includes(agent.id)} onChange={(event) => setRouterForm({ ...routerForm, router_target_ids: event.target.checked ? [...routerForm.router_target_ids, agent.id] : routerForm.router_target_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset></div></details>
         <div className="form-actions"><button className="btn" type="button" onClick={() => { setShowRouterForm(false); setEditingRouterId(null); setRouterForm(blankRouter); setSearchParams({ mode: "router" }); }}>Cancel</button><button className="btn btn-primary" disabled={savingRouter}>{savingRouter ? "Saving..." : editingRouterId ? "Save router" : "Create router"}</button></div>
       </form> : null}
       {loading ? <p>Loading...</p> : !routers.length ? <div className="multi-agent-empty"><p className="idle-title">No routers yet</p><p>Use New router to create one.</p></div> : <ul className="supervisor-system-list">{routers.map((router) => {
@@ -401,16 +404,17 @@ export function WorkflowsPage() {
     </main> : null}
     {executionMode === "supervisor" ? <main className="box panel">
       <div className="panel-head"><div><h1>Supervisor systems</h1><p>Create supervisors here and open one to see its managed agents.</p></div><button className="btn btn-primary" type="button" onClick={() => { setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setShowSupervisorForm(true); setSearchParams({ mode: "supervisor" }); }}>New supervisor</button></div>
-      {showSupervisorForm ? <form className="stack supervisor-create-form" onSubmit={createSupervisor}>
-        <div className="panel-head"><h2>{editingSupervisorId ? "Edit supervisor" : "New supervisor"}</h2><button type="button" className="icon-close" onClick={() => { setShowSupervisorForm(false); setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSearchParams({ mode: "supervisor" }); }}>×</button></div>
+      {showSupervisorForm ? <form className="stack supervisor-create-form multi-agent-edit-form" onSubmit={createSupervisor}>
+        <div className="panel-accent multi-agent-form-accent"><div className="panel-head"><div><h2>{editingSupervisorId ? "Edit supervisor" : "New supervisor"}</h2><p>Model, instructions, managed agents, and sharing.</p></div><button type="button" className="icon-close" onClick={() => { setShowSupervisorForm(false); setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSearchParams({ mode: "supervisor" }); }}>×</button></div></div>
         <div className="workflow-step-grid"><label>Name<input required value={supervisorForm.name} onChange={(event) => setSupervisorForm({ ...supervisorForm, name: event.target.value })} /></label><label>Model<select value={supervisorForm.model} onChange={(event) => setSupervisorForm({ ...supervisorForm, model: event.target.value })}>{MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.provider}</option>)}</select></label></div>
         <label>Temperature ({supervisorForm.temperature.toFixed(1)})<input type="range" min={0} max={2} step={0.1} value={supervisorForm.temperature} onChange={(event) => setSupervisorForm({ ...supervisorForm, temperature: Number(event.target.value) })} /></label>
         <label>System prompt<textarea rows={6} required value={supervisorForm.system_prompt} onChange={(event) => setSupervisorForm({ ...supervisorForm, system_prompt: event.target.value })} /></label>
-        {editingSupervisorId ? <PromptVersionHistory agentId={editingSupervisorId} currentPrompt={supervisorForm.system_prompt} onDraftCreated={(prompt) => setSupervisorForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => {
+        {editingSupervisorId ? <details className="agent-config-section"><summary><span>Prompt history & evaluation</span><small>Versions, scoring, and AI-assisted drafts</small></summary><div className="agent-config-content"><PromptVersionHistory agentId={editingSupervisorId} currentPrompt={supervisorForm.system_prompt} onDraftCreated={(prompt) => setSupervisorForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => {
           setSupervisorForm((current) => ({ ...current, system_prompt: agent.system_prompt }));
           void load();
-        }} /> : null}
-        <fieldset className="tool-picker"><legend>Managed agents</legend><span className="field-hint">Normal agents can be reused by multiple supervisors.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={supervisorForm.managed_agent_ids.includes(agent.id)} onChange={(event) => setSupervisorForm({ ...supervisorForm, managed_agent_ids: event.target.checked ? [...supervisorForm.managed_agent_ids, agent.id] : supervisorForm.managed_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset>
+        }} /></div></details> : null}
+        {editingSupervisor ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this supervisor securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingSupervisor} onChanged={load} /></div></details> : null}
+        <details className="agent-config-section"><summary><span>Managed agents</span><small>{supervisorForm.managed_agent_ids.length} selected</small></summary><div className="agent-config-content"><fieldset className="tool-picker"><legend>Available agents</legend><span className="field-hint">Normal agents can be reused by multiple supervisors.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={supervisorForm.managed_agent_ids.includes(agent.id)} onChange={(event) => setSupervisorForm({ ...supervisorForm, managed_agent_ids: event.target.checked ? [...supervisorForm.managed_agent_ids, agent.id] : supervisorForm.managed_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset></div></details>
         <div className="form-actions"><button className="btn" type="button" onClick={() => { setShowSupervisorForm(false); setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSearchParams({ mode: "supervisor" }); }}>Cancel</button><button className="btn btn-primary" disabled={savingSupervisor}>{savingSupervisor ? "Saving..." : editingSupervisorId ? "Save supervisor" : "Create supervisor"}</button></div>
       </form> : null}
       {loading ? <p>Loading...</p> : !supervisors.length ? <div className="multi-agent-empty"><p className="idle-title">No supervisors yet</p><p>Use New supervisor to create one.</p></div> : <ul className="supervisor-system-list">{supervisors.map((supervisor) => {

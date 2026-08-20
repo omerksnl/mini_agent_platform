@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } 
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AppHeader } from "../components/AppHeader";
 
 import {
   api,
@@ -14,7 +15,6 @@ import {
   type WorkflowArtifact,
   type WorkflowStepInput,
 } from "../api";
-import { useAuth } from "../AuthContext";
 
 type Point = { x: number; y: number };
 type StudioNode = WorkflowStepInput & { point: Point };
@@ -162,7 +162,6 @@ function validateGraph(nodes: StudioNode[], routes: StudioRoute[]): string[] {
 }
 
 export function WorkflowStudioPage() {
-  const { me, logout } = useAuth();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -357,7 +356,7 @@ export function WorkflowStudioPage() {
   };
 
   return <div className="app-shell workflow-studio-page">
-    <header className="box topbar"><div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div><div className="topbar-actions"><Link className="btn" to="/">Agents</Link><Link className="btn" to="/multi-agent">Multi-agent</Link><Link className="btn btn-primary" to="/workflows">Workflows</Link><Link className="btn" to="/chat">Chat</Link><button className="btn" onClick={logout}>Sign out</button></div></header>
+    <AppHeader />
     {error ? <p className="error">{error}</p> : null}
     <main className="workflow-studio-shell">
       <aside className="box workflow-studio-library">

@@ -19,6 +19,8 @@ export type Agent = {
   system_prompt: string;
   model: string;
   temperature: number;
+  a2a_enabled: boolean;
+  a2a_description: string;
   system_tools: string[];
   tool_ids: string[];
   skill_ids: string[];
@@ -131,6 +133,25 @@ export type WorkflowStepInput = {
   http_tool_id: string | null;
   system_tool_name: string | null;
   config: Record<string, unknown>;
+};
+
+export type A2APublishResponse = {
+  api_key: string;
+  agent_card_url: string;
+  endpoint_url: string;
+};
+
+export type RemoteAgent = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string;
+  agent_card_url: string;
+  endpoint_url: string;
+  protocol_version: string;
+  skills: Array<{ id?: string; name?: string; description?: string; tags?: string[] }>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AgentPromptVersion = {
@@ -305,6 +326,33 @@ export const api = {
       `/api/agents/${id}/prompt-improvements`,
       { method: "POST", body: JSON.stringify({ draft_prompt: draftPrompt }) },
     );
+  },
+  publishAgentA2A(id: string, description: string) {
+    return request<A2APublishResponse>(`/api/agents/${id}/a2a/publish`, {
+      method: "POST",
+      body: JSON.stringify({ description }),
+    });
+  },
+  unpublishAgentA2A(id: string) {
+    return request<Agent>(`/api/agents/${id}/a2a/publish`, { method: "DELETE" });
+  },
+  listRemoteAgents() {
+    return request<RemoteAgent[]>("/api/remote-agents");
+  },
+  createRemoteAgent(agentCardUrl: string, apiKey: string) {
+    return request<RemoteAgent>("/api/remote-agents", {
+      method: "POST",
+      body: JSON.stringify({ agent_card_url: agentCardUrl, api_key: apiKey }),
+    });
+  },
+  deleteRemoteAgent(id: string) {
+    return request<void>(`/api/remote-agents/${id}`, { method: "DELETE" });
+  },
+  sendRemoteAgentMessage(id: string, content: string, attachmentIds: string[] = []) {
+    return request<{ content: string; context_id: string | null; api_cost_usd: number }>(`/api/remote-agents/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, attachment_ids: attachmentIds }),
+    });
   },
   deleteAgent(id: string) {
     return request<void>(`/api/agents/${id}`, { method: "DELETE" });

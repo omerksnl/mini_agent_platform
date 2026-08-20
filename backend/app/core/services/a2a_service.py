@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import secrets
+import base64
+import binascii
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -9,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.core.observability import bind_trace_context
 from app.core.services.agent_service import AgentError, AgentService
 from app.core.services.llm_service import LLMClient, LLMError, LLMResult
-from app.models import Agent
+from app.core.services.attachment_service import AttachmentError, AttachmentService
+from app.models import Agent, Attachment, User
 
 
 class A2AError(Exception):
@@ -58,7 +61,28 @@ class A2AService:
         if not hmac.compare_digest(supplied_hash, agent.a2a_api_key_hash):
             raise A2AError("Invalid A2A API key", 401)
 
-    def invoke(self, agent: Agent, text: str, llm_client: LLMClient) -> tuple[str, float]:
+    def create_received_pdf(self, agent: Agent, name: str, mime_type: str, encoded: str) -> Attachment:
+        if "pdf_to_text" not in agent.system_tools:
+            raise A2AError("This agent does not accept PDF attachments")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise A2AError("A2A PDF attachment is not valid base64") from exc
+        owner = self.db.scalar(select(User).where(User.tenant_id == agent.tenant_id).order_by(User.created_at))
+        if owner is None:
+            raise A2AError("Published agent has no tenant owner", 500)
+        try:
+            return AttachmentService(self.db).create_pdf(agent.tenant_id, owner.id, name, mime_type, data)
+        except AttachmentError as exc:
+            raise A2AError(exc.message, exc.status_code) from exc
+
+    def invoke(
+        self,
+        agent: Agent,
+        text: str,
+        llm_client: LLMClient,
+        attachments: list[Attachment] | None = None,
+    ) -> tuple[str, float]:
         messages = [{"role": "user", "content": text}]
         try:
             with bind_trace_context(
@@ -70,11 +94,13 @@ class A2AService:
                     agent.collections
                     or agent.agent_type in {"supervisor", "router"}
                     or "text_to_pdf" in agent.system_tools
+                    or attachments
                 )
                 result = llm_client.complete(
                     agent,
                     messages,
                     agent.http_tools,
+                    attachments=attachments,
                     db=self.db if needs_db else None,
                 )
         except LLMError as exc:
