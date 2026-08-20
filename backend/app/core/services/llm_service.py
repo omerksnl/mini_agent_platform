@@ -226,6 +226,7 @@ class OpenRouterLLMClient:
                     child.http_tools,
                     child_attachments,
                     db,
+                    skip_response_validation=True,
                 )
                 if child.name not in used_agents:
                     used_agents.append(child.name)
@@ -249,7 +250,7 @@ class OpenRouterLLMClient:
                 skill_names=["cv_extraction"],
                 required_tool_names=["pdf_to_text"],
             )
-        elif skip_request_routing:
+        elif skip_request_routing or is_supervisor:
             latest_user = next(
                 (item["content"] for item in reversed(messages) if item["role"] == "user"),
                 "",
