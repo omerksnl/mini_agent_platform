@@ -1,0 +1,116 @@
+from fastapi.testclient import TestClient
+
+from app.api.deps import get_llm_client
+from app.core.services.llm_service import LLMResult
+from app.main import app
+
+
+def register(client: TestClient, email: str, tenant_name: str) -> dict[str, str]:
+    response = client.post("/api/auth/register", json={
+        "email": email,
+        "password": "test-password",
+        "full_name": "A2A Tester",
+        "tenant_name": tenant_name,
+    })
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def create_agent(client: TestClient, headers: dict[str, str]) -> dict:
+    response = client.post("/api/agents", headers=headers, json={
+        "name": "Public Research Agent",
+        "system_prompt": "Answer research questions briefly.",
+        "system_tools": [],
+    })
+    assert response.status_code == 201
+    return response.json()
+
+
+class FakeLLMClient:
+    def complete(self, agent, messages, http_tools=None, attachments=None, db=None, **kwargs):
+        assert agent.name == "Public Research Agent"
+        assert messages == [{"role": "user", "content": "Explain A2A briefly"}]
+        return LLMResult(
+            content="A2A lets independent agents exchange tasks.",
+            used_tools=[],
+            api_cost_usd=0.001,
+        )
+
+
+def test_published_agent_exposes_card_and_accepts_authenticated_message(client: TestClient) -> None:
+    owner = register(client, "a2a-owner@example.com", "A2A Owner")
+    agent = create_agent(client, owner)
+
+    unpublished = client.get(f"/a2a/agents/{agent['id']}/.well-known/agent-card.json")
+    assert unpublished.status_code == 404
+
+    published = client.post(
+        f"/api/agents/{agent['id']}/a2a/publish",
+        headers=owner,
+        json={"description": "Answers short research questions."},
+    )
+    assert published.status_code == 200
+    api_key = published.json()["api_key"]
+    assert api_key.startswith("a2a_")
+
+    card = client.get(published.json()["agent_card_url"])
+    assert card.status_code == 200
+    assert card.json()["name"] == "Public Research Agent"
+    assert card.json()["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
+    assert "system_prompt" not in card.text
+    assert "tenant" not in card.text.lower()
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "request-1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "kind": "message",
+                "role": "user",
+                "messageId": "message-1",
+                "parts": [{"kind": "text", "text": "Explain A2A briefly"}],
+            }
+        },
+    }
+    assert client.post(published.json()["endpoint_url"], json=payload).status_code == 401
+
+    app.dependency_overrides[get_llm_client] = lambda: FakeLLMClient()
+    try:
+        response = client.post(
+            published.json()["endpoint_url"],
+            headers={"Authorization": f"Bearer {api_key}", "A2A-Version": "1.0"},
+            json=payload,
+        )
+    finally:
+        app.dependency_overrides.pop(get_llm_client, None)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "request-1"
+    assert body["result"]["role"] == "agent"
+    assert body["result"]["parts"][0]["text"] == "A2A lets independent agents exchange tasks."
+
+
+def test_a2a_key_rotation_and_unpublish_invalidate_previous_access(client: TestClient) -> None:
+    owner = register(client, "a2a-rotate@example.com", "A2A Rotate")
+    agent = create_agent(client, owner)
+    first = client.post(
+        f"/api/agents/{agent['id']}/a2a/publish", headers=owner, json={"description": "First"}
+    ).json()
+    second = client.post(
+        f"/api/agents/{agent['id']}/a2a/publish", headers=owner, json={"description": "Second"}
+    ).json()
+    assert first["api_key"] != second["api_key"]
+
+    payload = {
+        "jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+        "params": {"message": {"role": "user", "parts": [{"text": "hello"}]}},
+    }
+    assert client.post(
+        second["endpoint_url"], headers={"Authorization": f"Bearer {first['api_key']}"}, json=payload
+    ).status_code == 401
+
+    disabled = client.delete(f"/api/agents/{agent['id']}/a2a/publish", headers=owner)
+    assert disabled.status_code == 200
+    assert disabled.json()["a2a_enabled"] is False
+    assert client.get(second["agent_card_url"]).status_code == 404

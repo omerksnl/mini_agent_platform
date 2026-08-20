@@ -110,6 +110,9 @@ class Agent(Base):
         String(128), nullable=False, default="anthropic/claude-haiku-4.5"
     )
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+    a2a_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    a2a_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    a2a_api_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     system_tools: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=lambda: ["calculator", "current_datetime"]
     )

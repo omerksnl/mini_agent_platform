@@ -1,10 +1,11 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser, get_current_user
 from app.core.services.agent_service import AgentError, AgentService
+from app.core.services.a2a_service import A2AService
 from app.core.services.prompt_optimization_service import (
     PromptOptimizationError,
     PromptOptimizationService,
@@ -12,6 +13,8 @@ from app.core.services.prompt_optimization_service import (
 from app.db.session import get_db
 from app.schemas.agent import (
     AgentCreate,
+    AgentA2APublishRequest,
+    AgentA2APublishResponse,
     AgentPromptVersionResponse,
     AgentResponse,
     AgentUpdate,
@@ -21,6 +24,40 @@ from app.schemas.agent import (
 )
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+@router.post("/{agent_id}/a2a/publish", response_model=AgentA2APublishResponse)
+def publish_agent_a2a(
+    agent_id: UUID,
+    payload: AgentA2APublishRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+) -> AgentA2APublishResponse:
+    try:
+        agent, api_key = A2AService(db).publish(agent_id, current.tenant_id, payload.description)
+    except AgentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    base_url = str(request.base_url).rstrip("/")
+    endpoint = f"{base_url}/a2a/agents/{agent.id}"
+    return AgentA2APublishResponse(
+        api_key=api_key,
+        agent_card_url=f"{endpoint}/.well-known/agent-card.json",
+        endpoint_url=endpoint,
+    )
+
+
+@router.delete("/{agent_id}/a2a/publish", response_model=AgentResponse)
+def unpublish_agent_a2a(
+    agent_id: UUID,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+) -> AgentResponse:
+    try:
+        agent = A2AService(db).unpublish(agent_id, current.tenant_id)
+    except AgentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return AgentResponse.model_validate(agent)
 
 
 @router.get("", response_model=list[AgentResponse])

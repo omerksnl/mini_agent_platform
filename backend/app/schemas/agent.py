@@ -57,6 +57,8 @@ class AgentResponse(BaseModel):
     system_prompt: str
     model: str
     temperature: float
+    a2a_enabled: bool
+    a2a_description: str
     system_tools: list[str]
     tool_ids: list[UUID]
     skill_ids: list[UUID]
@@ -94,3 +96,13 @@ class PromptImproveResponse(BaseModel):
     improved_prompt: str
     rationale: list[str]
     api_cost_usd: float
+
+
+class AgentA2APublishRequest(BaseModel):
+    description: str = Field(default="", max_length=2000)
+
+
+class AgentA2APublishResponse(BaseModel):
+    api_key: str
+    agent_card_url: str
+    endpoint_url: str
