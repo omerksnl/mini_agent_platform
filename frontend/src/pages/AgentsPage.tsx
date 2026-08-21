@@ -21,6 +21,9 @@ const emptyForm: AgentInput = {
   collection_ids: [],
   managed_agent_ids: [],
   router_target_ids: [],
+  managed_remote_agent_ids: [],
+  router_remote_agent_ids: [],
+  remote_agent_ids: [],
 };
 
 type PanelMode = "idle" | "create" | "edit" | "remote";
@@ -110,6 +113,9 @@ export function AgentsPage() {
       collection_ids: agent.collection_ids,
       managed_agent_ids: agent.managed_agent_ids,
       router_target_ids: agent.router_target_ids,
+      managed_remote_agent_ids: agent.managed_remote_agent_ids,
+      router_remote_agent_ids: agent.router_remote_agent_ids,
+      remote_agent_ids: agent.remote_agent_ids,
     });
     setError("");
   }
@@ -372,7 +378,7 @@ export function AgentsPage() {
                   void loadAgents();
                 }} /></div></details> : null}
                 {editingAgent ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this agent securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingAgent} onChanged={loadAgents} /></div></details> : null}
-                <details className="agent-config-section"><summary><span>Capabilities & knowledge</span><small>{form.system_tools.length + form.tool_ids.length} tools · {form.skill_ids.length} skills · {form.collection_ids.length} collections</small></summary><div className="agent-config-content capability-config-grid">
+                <details className="agent-config-section"><summary><span>Capabilities & knowledge</span><small>{form.system_tools.length + form.tool_ids.length} tools · {form.remote_agent_ids.length} A2A · {form.skill_ids.length} skills · {form.collection_ids.length} collections</small></summary><div className="agent-config-content capability-config-grid">
                 <fieldset className="tool-picker">
                   <legend>Tools</legend>
                   <span className="field-hint">The agent can only call selected tools.</span>
@@ -412,6 +418,17 @@ export function AgentsPage() {
                     </label>
                   ))}
                   {tools.length === 0 ? <Link className="field-hint" to="/tools">Create an HTTP tool</Link> : null}
+                </fieldset>
+                <fieldset className="tool-picker">
+                  <legend>Remote A2A agents</legend>
+                  <span className="field-hint">Selected remote specialists become callable tools for this agent.</span>
+                  {remoteAgents.map((remote) => (
+                    <label className="tool-option" key={remote.id}>
+                      <input type="checkbox" checked={form.remote_agent_ids.includes(remote.id)} onChange={(event) => setForm({ ...form, remote_agent_ids: event.target.checked ? [...form.remote_agent_ids, remote.id] : form.remote_agent_ids.filter((id) => id !== remote.id) })} />
+                      <span><strong>{remote.name} · A2A</strong><small>{remote.description || "Remote specialist"}</small></span>
+                    </label>
+                  ))}
+                  {remoteAgents.length === 0 ? <span className="field-hint">Connect a remote agent from the Agents list first.</span> : null}
                 </fieldset>
                 <fieldset className="tool-picker">
                   <legend>Knowledge collections</legend>

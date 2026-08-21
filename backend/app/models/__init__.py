@@ -41,6 +41,24 @@ router_agents = Table(
     Column("target_agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
 )
 
+supervisor_remote_agents = Table(
+    "supervisor_remote_agents", Base.metadata,
+    Column("supervisor_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("remote_agent_id", UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+router_remote_agents = Table(
+    "router_remote_agents", Base.metadata,
+    Column("router_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("remote_agent_id", UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+agent_remote_tools = Table(
+    "agent_remote_tools", Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("remote_agent_id", UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class AgentSkill(Base):
     __tablename__ = "agent_skills"
@@ -159,6 +177,18 @@ class Agent(Base):
         secondaryjoin=id == router_agents.c.target_agent_id,
         back_populates="routers",
     )
+    managed_remote_agents: Mapped[list["RemoteAgent"]] = relationship(
+        secondary=supervisor_remote_agents,
+        primaryjoin=id == supervisor_remote_agents.c.supervisor_id,
+    )
+    router_remote_targets: Mapped[list["RemoteAgent"]] = relationship(
+        secondary=router_remote_agents,
+        primaryjoin=id == router_remote_agents.c.router_id,
+    )
+    remote_agent_tools: Mapped[list["RemoteAgent"]] = relationship(
+        secondary=agent_remote_tools,
+        primaryjoin=id == agent_remote_tools.c.agent_id,
+    )
     routers: Mapped[list["Agent"]] = relationship(
         secondary=router_agents,
         primaryjoin=id == router_agents.c.target_agent_id,
@@ -203,6 +233,18 @@ class Agent(Base):
     @property
     def router_ids(self) -> list[uuid.UUID]:
         return [item.id for item in self.routers]
+
+    @property
+    def managed_remote_agent_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.managed_remote_agents]
+
+    @property
+    def router_remote_agent_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.router_remote_targets]
+
+    @property
+    def remote_agent_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.remote_agent_tools]
 
 
 class AgentPromptVersion(Base):
@@ -325,7 +367,7 @@ class WorkflowStep(Base):
         UniqueConstraint("workflow_id", "step_key", name="uq_workflow_steps_key"),
         UniqueConstraint("workflow_id", "position", name="uq_workflow_steps_position"),
         CheckConstraint(
-            "step_type IN ('agent', 'http_tool', 'system_tool', 'human_wait', 'report')",
+            "step_type IN ('agent', 'remote_agent', 'http_tool', 'system_tool', 'human_wait', 'report')",
             name="ck_workflow_steps_type",
         ),
     )
@@ -341,6 +383,9 @@ class WorkflowStep(Base):
     agent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=True
     )
+    remote_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="RESTRICT"), nullable=True
+    )
     http_tool_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("http_tools.id", ondelete="RESTRICT"), nullable=True
     )
@@ -349,6 +394,7 @@ class WorkflowStep(Base):
 
     workflow: Mapped[Workflow] = relationship(back_populates="steps")
     agent: Mapped[Agent | None] = relationship(foreign_keys=[agent_id])
+    remote_agent: Mapped[RemoteAgent | None] = relationship(foreign_keys=[remote_agent_id])
     http_tool: Mapped[HttpTool | None] = relationship(foreign_keys=[http_tool_id])
 
 

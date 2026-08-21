@@ -18,6 +18,9 @@ class AgentCreate(BaseModel):
     collection_ids: list[UUID] = Field(default_factory=list)
     managed_agent_ids: list[UUID] = Field(default_factory=list)
     router_target_ids: list[UUID] = Field(default_factory=list)
+    managed_remote_agent_ids: list[UUID] = Field(default_factory=list)
+    router_remote_agent_ids: list[UUID] = Field(default_factory=list)
+    remote_agent_ids: list[UUID] = Field(default_factory=list)
 
 
 class AgentUpdate(BaseModel):
@@ -32,6 +35,9 @@ class AgentUpdate(BaseModel):
     collection_ids: list[UUID] | None = None
     managed_agent_ids: list[UUID] | None = None
     router_target_ids: list[UUID] | None = None
+    managed_remote_agent_ids: list[UUID] | None = None
+    router_remote_agent_ids: list[UUID] | None = None
+    remote_agent_ids: list[UUID] | None = None
 
     @model_validator(mode="after")
     def reject_explicit_nulls(self) -> Self:
@@ -65,6 +71,9 @@ class AgentResponse(BaseModel):
     collection_ids: list[UUID]
     managed_agent_ids: list[UUID]
     router_target_ids: list[UUID]
+    managed_remote_agent_ids: list[UUID]
+    router_remote_agent_ids: list[UUID]
+    remote_agent_ids: list[UUID]
     router_ids: list[UUID]
     created_at: datetime
     updated_at: datetime

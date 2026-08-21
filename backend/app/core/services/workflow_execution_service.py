@@ -13,6 +13,7 @@ from app.core.services.workflow_service import WorkflowError, WorkflowService
 from app.core.services.collection_service import CollectionService
 from app.core.services.generated_file_service import GeneratedFileService
 from app.core.services.report_pdf_service import ReportPdfService
+from app.core.services.remote_agent_service import RemoteAgentService
 from app.core.tools import SYSTEM_TOOL_MAP
 from app.core.tools.http_tools import build_http_tool
 from app.core.observability import bind_trace_context
@@ -259,7 +260,7 @@ class WorkflowExecutionService:
                 step_run.completed_at = datetime.now(timezone.utc)
                 run.total_api_cost_usd += cost
                 artifact_type = (
-                    "agent_output" if current.step_type == "agent"
+                    "agent_output" if current.step_type in {"agent", "remote_agent"}
                     else "generated_file" if current.step_type == "report"
                     else "tool_output"
                 )
@@ -294,6 +295,25 @@ class WorkflowExecutionService:
         return self._complete(run)
 
     def _execute_step(self, step: WorkflowStep, state: dict, attachments: list) -> tuple[dict, float]:
+        if step.step_type == "remote_agent" and step.remote_agent is not None:
+            artifacts = [
+                {"key": item.artifact_key, "name": item.name, "type": item.artifact_type, "data": item.data}
+                for item in state.get("artifacts", [])
+            ]
+            requested_keys = step.config.get("input_artifact_keys")
+            if isinstance(requested_keys, list) and requested_keys:
+                allowed = {str(key) for key in requested_keys}
+                artifacts = [item for item in artifacts if item["key"] in allowed]
+            task = str(step.config.get("task_instructions", "")).strip() or f"Execute workflow step '{step.name}'."
+            context = json.dumps(artifacts, ensure_ascii=False, default=str, separators=(",", ":"))
+            text, context_id, cost = RemoteAgentService(self.db).send(
+                step.remote_agent.id,
+                step.remote_agent.tenant_id,
+                step.remote_agent.owner_user_id,
+                f"{task}\n\nWORKFLOW ARTIFACTS\n{context}",
+                [item.id for item in attachments],
+            )
+            return {"content": text, "used_agents": [step.remote_agent.name], "a2a_context_id": context_id}, cost
         if step.step_type == "agent" and step.agent is not None:
             if self.llm_client is None:
                 raise WorkflowError("LLM client is unavailable")

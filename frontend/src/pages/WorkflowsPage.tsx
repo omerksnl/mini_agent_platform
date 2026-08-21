@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "rea
 import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type Agent, type AgentInput, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
+import { api, type Agent, type AgentInput, type RemoteAgent, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
 import { HumanFeedback } from "../components/HumanFeedback";
@@ -14,8 +14,8 @@ type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; t
 type Form = { name: string; description: string; is_active: boolean; steps: StepForm[] };
 type ExecutionMode = "workflow" | "router" | "supervisor";
 const blank: Form = { name: "", description: "", is_active: true, steps: [] };
-const blankSupervisor: AgentInput = { name: "", agent_type: "supervisor", system_prompt: "You coordinate managed agents and delegate each task to the appropriate specialist.", model: DEFAULT_MODEL, temperature: 0.2, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: [] };
-const blankRouter: AgentInput = { name: "", agent_type: "router", system_prompt: "Route each request to exactly one suitable specialist. Ask one short clarification question only when the request is genuinely ambiguous.", model: DEFAULT_MODEL, temperature: 0.1, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: [] };
+const blankSupervisor: AgentInput = { name: "", agent_type: "supervisor", system_prompt: "You coordinate managed agents and delegate each task to the appropriate specialist.", model: DEFAULT_MODEL, temperature: 0.2, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: [], managed_remote_agent_ids: [], router_remote_agent_ids: [], remote_agent_ids: [] };
+const blankRouter: AgentInput = { name: "", agent_type: "router", system_prompt: "Route each request to exactly one suitable specialist. Ask one short clarification question only when the request is genuinely ambiguous.", model: DEFAULT_MODEL, temperature: 0.1, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: [], managed_remote_agent_ids: [], router_remote_agent_ids: [], remote_agent_ids: [] };
 
 function readableLabel(value: string): string {
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -97,6 +97,7 @@ export function WorkflowsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Workflow[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [remoteAgents, setRemoteAgents] = useState<RemoteAgent[]>([]);
   const [form, setForm] = useState<Form>(blank);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showWorkflowForm, setShowWorkflowForm] = useState(false);
@@ -127,8 +128,8 @@ export function WorkflowsPage() {
   async function load() {
     setLoading(true); setError("");
     try {
-      const [workflows, agentList] = await Promise.all([api.listWorkflows(), api.listAgents()]);
-      setItems(workflows); setAgents(agentList);
+      const [workflows, agentList, remoteList] = await Promise.all([api.listWorkflows(), api.listAgents(), api.listRemoteAgents()]);
+      setItems(workflows); setAgents(agentList); setRemoteAgents(remoteList);
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to load workflows"); }
     finally { setLoading(false); }
   }
@@ -156,7 +157,7 @@ export function WorkflowsPage() {
       const supervisor = agents.find((item) => item.id === searchParams.get("edit") && item.agent_type === "supervisor");
       if (supervisor) {
         setEditingSupervisorId(supervisor.id); setShowSupervisorForm(true);
-        setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [] });
+        setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
       }
     } else if (mode === "router") {
       setExecutionMode("router");
@@ -209,7 +210,7 @@ export function WorkflowsPage() {
     setShowWorkflowForm(true);
     setForm({ name: workflow.name, description: workflow.description, is_active: workflow.is_active, steps: steps.map((step, index) => ({
       step_key: step.step_key, name: step.name, step_type: step.step_type,
-      target_id: step.agent_id ?? step.http_tool_id ?? "", system_tool_name: step.system_tool_name ?? "calculator",
+      target_id: step.agent_id ?? step.remote_agent_id ?? step.http_tool_id ?? "", system_tool_name: step.system_tool_name ?? "calculator",
       required_input: typeof step.config.required_input === "string" ? step.config.required_input : "",
       task_instructions: typeof step.config.task_instructions === "string" ? step.config.task_instructions : "",
       collection_mode: step.config.collection_mode === "off" || step.config.collection_mode === "search" || step.config.collection_mode === "full_context"
@@ -234,6 +235,7 @@ export function WorkflowsPage() {
       steps: form.steps.map((step, position) => ({
         step_key: step.step_key.trim(), name: step.name.trim(), step_type: step.step_type, position,
         agent_id: step.step_type === "agent" ? step.target_id : null,
+        remote_agent_id: step.step_type === "remote_agent" ? step.target_id : null,
         http_tool_id: step.step_type === "http_tool" ? step.target_id : null,
         system_tool_name: step.step_type === "system_tool" ? step.system_tool_name : null,
         config: step.step_type === "human_wait"
@@ -286,7 +288,7 @@ export function WorkflowsPage() {
   }
   function openSupervisorEditor(supervisor: Agent) {
     setEditingSupervisorId(supervisor.id); setShowSupervisorForm(true);
-    setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [] });
+    setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
     setSearchParams({ mode: "supervisor", edit: supervisor.id });
   }
   function toggleRouter(id: string) {
@@ -300,7 +302,7 @@ export function WorkflowsPage() {
   }
   function openRouterEditor(router: Agent) {
     setEditingRouterId(router.id); setShowRouterForm(true);
-    setRouterForm({ name: router.name, agent_type: "router", system_prompt: router.system_prompt, model: router.model, temperature: router.temperature, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: router.router_target_ids });
+    setRouterForm({ name: router.name, agent_type: "router", system_prompt: router.system_prompt, model: router.model, temperature: router.temperature, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: router.router_target_ids, managed_remote_agent_ids: [], router_remote_agent_ids: router.router_remote_agent_ids, remote_agent_ids: [] });
     setSearchParams({ mode: "router", edit: router.id });
   }
   function openRunner(workflow: Workflow) {
@@ -386,19 +388,20 @@ export function WorkflowsPage() {
         <label>Routing instructions<textarea rows={6} required value={routerForm.system_prompt} onChange={(event) => setRouterForm({ ...routerForm, system_prompt: event.target.value })} /></label>
         {editingRouterId ? <details className="agent-config-section"><summary><span>Prompt history & evaluation</span><small>Versions, scoring, and AI-assisted drafts</small></summary><div className="agent-config-content"><PromptVersionHistory agentId={editingRouterId} currentPrompt={routerForm.system_prompt} onDraftCreated={(prompt) => setRouterForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => { setRouterForm((current) => ({ ...current, system_prompt: agent.system_prompt })); void load(); }} /></div></details> : null}
         {editingRouter ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this router securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingRouter} onChanged={load} /></div></details> : null}
-        <details className="agent-config-section"><summary><span>Target agents</span><small>{routerForm.router_target_ids.length} selected</small></summary><div className="agent-config-content"><fieldset className="tool-picker"><legend>Available agents</legend><span className="field-hint">The router will select exactly one of these normal agents.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={routerForm.router_target_ids.includes(agent.id)} onChange={(event) => setRouterForm({ ...routerForm, router_target_ids: event.target.checked ? [...routerForm.router_target_ids, agent.id] : routerForm.router_target_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset></div></details>
+        <details className="agent-config-section"><summary><span>Target agents</span><small>{routerForm.router_target_ids.length + routerForm.router_remote_agent_ids.length} selected</small></summary><div className="agent-config-content"><fieldset className="tool-picker"><legend>Local agents</legend><span className="field-hint">The router selects exactly one local or A2A agent.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={routerForm.router_target_ids.includes(agent.id)} onChange={(event) => setRouterForm({ ...routerForm, router_target_ids: event.target.checked ? [...routerForm.router_target_ids, agent.id] : routerForm.router_target_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset><fieldset className="tool-picker"><legend>Remote A2A agents</legend>{remoteAgents.map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={routerForm.router_remote_agent_ids.includes(agent.id)} onChange={(event) => setRouterForm({ ...routerForm, router_remote_agent_ids: event.target.checked ? [...routerForm.router_remote_agent_ids, agent.id] : routerForm.router_remote_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name} <em>A2A</em></strong><small>{agent.description || "Remote specialist"}</small></span></label>)}</fieldset></div></details>
         <div className="form-actions"><button className="btn" type="button" onClick={() => { setShowRouterForm(false); setEditingRouterId(null); setRouterForm(blankRouter); setSearchParams({ mode: "router" }); }}>Cancel</button><button className="btn btn-primary" disabled={savingRouter}>{savingRouter ? "Saving..." : editingRouterId ? "Save router" : "Create router"}</button></div>
       </form> : null}
       {loading ? <p>Loading...</p> : !routers.length ? <div className="multi-agent-empty"><p className="idle-title">No routers yet</p><p>Use New router to create one.</p></div> : <ul className="supervisor-system-list">{routers.map((router) => {
         const expanded = expandedRouters.has(router.id);
         const targets = router.router_target_ids.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
+        const remoteTargets = router.router_remote_agent_ids.map((id) => remoteAgents.find((agent) => agent.id === id)).filter((agent): agent is RemoteAgent => Boolean(agent));
         return <li key={router.id} className="supervisor-system">
           <button type="button" className="supervisor-system-head" onClick={() => toggleRouter(router.id)} aria-expanded={expanded}>
             <span className={`tree-toggle ${expanded ? "expanded" : ""}`}><span aria-hidden="true" /></span>
-            <span className="supervisor-summary"><strong>{router.name}</strong><small>{targets.length} possible targets</small><small>{router.model}</small></span>
+            <span className="supervisor-summary"><strong>{router.name}</strong><small>{targets.length + remoteTargets.length} possible targets</small><small>{router.model}</small></span>
             <span className="agent-type-badge supervisor">Router</span>
           </button>
-          {expanded ? <div className="supervisor-managed-area"><div className="relationship-graph supervisor-graph"><button type="button" className="relationship-root editable" onClick={() => openRouterEditor(router)}><strong>{router.name}</strong><small>Router · click to edit</small></button>{targets.length ? <><RelationshipArrows count={targets.length} id={`router-${router.id}`} /><div className="relationship-children">{targets.map((agent) => <Link to={`/?edit=${agent.id}`} className="relationship-node" key={agent.id}><strong>{agent.name}</strong><small>{agent.model}</small><span>Click to edit</span></Link>)}</div></> : <p>No target agents</p>}</div></div> : null}
+          {expanded ? <div className="supervisor-managed-area"><div className="relationship-graph supervisor-graph"><button type="button" className="relationship-root editable" onClick={() => openRouterEditor(router)}><strong>{router.name}</strong><small>Router · click to edit</small></button>{targets.length + remoteTargets.length ? <><RelationshipArrows count={targets.length + remoteTargets.length} id={`router-${router.id}`} /><div className="relationship-children">{targets.map((agent) => <Link to={`/?edit=${agent.id}`} className="relationship-node" key={agent.id}><strong>{agent.name}</strong><small>{agent.model}</small><span>Click to edit</span></Link>)}{remoteTargets.map((agent) => <div className="relationship-node remote" key={`remote-${agent.id}`}><strong>{agent.name}</strong><small>A2A remote agent</small><span>{agent.description || "Remote specialist"}</span></div>)}</div></> : <p>No target agents</p>}</div></div> : null}
         </li>;
       })}</ul>}
     </main> : null}
@@ -414,19 +417,20 @@ export function WorkflowsPage() {
           void load();
         }} /></div></details> : null}
         {editingSupervisor ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this supervisor securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingSupervisor} onChanged={load} /></div></details> : null}
-        <details className="agent-config-section"><summary><span>Managed agents</span><small>{supervisorForm.managed_agent_ids.length} selected</small></summary><div className="agent-config-content"><fieldset className="tool-picker"><legend>Available agents</legend><span className="field-hint">Normal agents can be reused by multiple supervisors.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={supervisorForm.managed_agent_ids.includes(agent.id)} onChange={(event) => setSupervisorForm({ ...supervisorForm, managed_agent_ids: event.target.checked ? [...supervisorForm.managed_agent_ids, agent.id] : supervisorForm.managed_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset></div></details>
+        <details className="agent-config-section"><summary><span>Managed agents</span><small>{supervisorForm.managed_agent_ids.length + supervisorForm.managed_remote_agent_ids.length} selected</small></summary><div className="agent-config-content"><fieldset className="tool-picker"><legend>Local agents</legend><span className="field-hint">Local and connected A2A agents can be delegated to.</span>{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={supervisorForm.managed_agent_ids.includes(agent.id)} onChange={(event) => setSupervisorForm({ ...supervisorForm, managed_agent_ids: event.target.checked ? [...supervisorForm.managed_agent_ids, agent.id] : supervisorForm.managed_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name}</strong><small>{agent.model}</small></span></label>)}</fieldset><fieldset className="tool-picker"><legend>Remote A2A agents</legend>{remoteAgents.map((agent) => <label className="tool-option" key={agent.id}><input type="checkbox" checked={supervisorForm.managed_remote_agent_ids.includes(agent.id)} onChange={(event) => setSupervisorForm({ ...supervisorForm, managed_remote_agent_ids: event.target.checked ? [...supervisorForm.managed_remote_agent_ids, agent.id] : supervisorForm.managed_remote_agent_ids.filter((id) => id !== agent.id) })} /><span><strong>{agent.name} <em>A2A</em></strong><small>{agent.description || "Remote specialist"}</small></span></label>)}</fieldset></div></details>
         <div className="form-actions"><button className="btn" type="button" onClick={() => { setShowSupervisorForm(false); setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSearchParams({ mode: "supervisor" }); }}>Cancel</button><button className="btn btn-primary" disabled={savingSupervisor}>{savingSupervisor ? "Saving..." : editingSupervisorId ? "Save supervisor" : "Create supervisor"}</button></div>
       </form> : null}
       {loading ? <p>Loading...</p> : !supervisors.length ? <div className="multi-agent-empty"><p className="idle-title">No supervisors yet</p><p>Use New supervisor to create one.</p></div> : <ul className="supervisor-system-list">{supervisors.map((supervisor) => {
         const expanded = expandedSupervisors.has(supervisor.id);
         const managed = supervisor.managed_agent_ids.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
+        const managedRemote = supervisor.managed_remote_agent_ids.map((id) => remoteAgents.find((agent) => agent.id === id)).filter((agent): agent is RemoteAgent => Boolean(agent));
         return <li key={supervisor.id} className="supervisor-system">
           <button type="button" className="supervisor-system-head" onClick={() => toggleSupervisor(supervisor.id)} aria-expanded={expanded}>
             <span className={`tree-toggle ${expanded ? "expanded" : ""}`}><span aria-hidden="true" /></span>
-            <span className="supervisor-summary"><strong>{supervisor.name}</strong><small>{managed.length} managed agents</small><small>{supervisor.model}</small></span>
+            <span className="supervisor-summary"><strong>{supervisor.name}</strong><small>{managed.length + managedRemote.length} managed agents</small><small>{supervisor.model}</small></span>
             <span className="agent-type-badge supervisor">Supervisor</span>
           </button>
-          {expanded ? <div className="supervisor-managed-area"><div className="relationship-graph supervisor-graph"><button type="button" className="relationship-root editable" onClick={() => openSupervisorEditor(supervisor)}><strong>{supervisor.name}</strong><small>Supervisor · click to edit</small></button>{managed.length ? <><RelationshipArrows count={managed.length} id={supervisor.id} twoWay /><div className="relationship-children">{managed.map((agent) => <Link to={`/?edit=${agent.id}`} className="relationship-node" key={agent.id}><strong>{agent.name}</strong><small>{agent.model}</small><span>Click to edit</span></Link>)}</div></> : <p>No managed agents</p>}</div></div> : null}
+          {expanded ? <div className="supervisor-managed-area"><div className="relationship-graph supervisor-graph"><button type="button" className="relationship-root editable" onClick={() => openSupervisorEditor(supervisor)}><strong>{supervisor.name}</strong><small>Supervisor · click to edit</small></button>{managed.length + managedRemote.length ? <><RelationshipArrows count={managed.length + managedRemote.length} id={supervisor.id} twoWay /><div className="relationship-children">{managed.map((agent) => <Link to={`/?edit=${agent.id}`} className="relationship-node" key={agent.id}><strong>{agent.name}</strong><small>{agent.model}</small><span>Click to edit</span></Link>)}{managedRemote.map((agent) => <div className="relationship-node remote" key={`remote-${agent.id}`}><strong>{agent.name}</strong><small>A2A remote agent</small><span>{agent.description || "Remote specialist"}</span></div>)}</div></> : <p>No managed agents</p>}</div></div> : null}
         </li>;
       })}</ul>}
     </main> : null}

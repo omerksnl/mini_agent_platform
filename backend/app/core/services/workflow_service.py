@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Agent, HttpTool, Workflow, WorkflowRoute, WorkflowStep
+from app.models import Agent, HttpTool, RemoteAgent, Workflow, WorkflowRoute, WorkflowStep
 from app.schemas.workflow import (
     WorkflowCreate,
     WorkflowRouteInput,
@@ -51,9 +51,9 @@ class WorkflowService:
             raise WorkflowError("Workflow not found", 404)
         return workflow
 
-    def create_workflow(self, tenant_id: UUID, payload: WorkflowCreate) -> Workflow:
+    def create_workflow(self, tenant_id: UUID, payload: WorkflowCreate, user_id: UUID | None = None) -> Workflow:
         self._ensure_name_available(tenant_id, payload.name)
-        self._validate_definition(tenant_id, payload.steps, payload.routes)
+        self._validate_definition(tenant_id, payload.steps, payload.routes, user_id)
         workflow = Workflow(
             tenant_id=tenant_id,
             name=payload.name,
@@ -67,7 +67,7 @@ class WorkflowService:
         return self.get_workflow(workflow.id, tenant_id)
 
     def update_workflow(
-        self, workflow_id: UUID, tenant_id: UUID, payload: WorkflowUpdate
+        self, workflow_id: UUID, tenant_id: UUID, payload: WorkflowUpdate, user_id: UUID | None = None
     ) -> Workflow:
         workflow = self.get_workflow(workflow_id, tenant_id)
         data = payload.model_dump(exclude_unset=True)
@@ -78,7 +78,7 @@ class WorkflowService:
         if steps is not None and routes is not None:
             step_inputs = [WorkflowStepInput.model_validate(item) for item in steps]
             route_inputs = [WorkflowRouteInput.model_validate(item) for item in routes]
-            self._validate_definition(tenant_id, step_inputs, route_inputs)
+            self._validate_definition(tenant_id, step_inputs, route_inputs, user_id)
             workflow.routes.clear()
             self.db.flush()
             workflow.steps.clear()
@@ -107,6 +107,7 @@ class WorkflowService:
                 step_type=item.step_type,
                 position=item.position,
                 agent_id=item.agent_id,
+                remote_agent_id=item.remote_agent_id,
                 http_tool_id=item.http_tool_id,
                 system_tool_name=item.system_tool_name,
                 config=item.config,
@@ -132,6 +133,7 @@ class WorkflowService:
         tenant_id: UUID,
         steps: list[WorkflowStepInput],
         routes: list[WorkflowRouteInput],
+        user_id: UUID | None = None,
     ) -> None:
         keys = [item.step_key for item in steps]
         positions = [item.position for item in steps]
@@ -162,6 +164,18 @@ class WorkflowService:
             )).all())
             if found_agents != set(agent_ids):
                 raise WorkflowError("One or more workflow agents were not found", 404)
+
+        remote_ids = list({item.remote_agent_id for item in steps if item.remote_agent_id is not None})
+        if remote_ids:
+            if user_id is None:
+                raise WorkflowError("User context is required for remote workflow agents")
+            found_remote = set(self.db.scalars(select(RemoteAgent.id).where(
+                RemoteAgent.id.in_(remote_ids),
+                RemoteAgent.tenant_id == tenant_id,
+                RemoteAgent.owner_user_id == user_id,
+            )).all())
+            if found_remote != set(remote_ids):
+                raise WorkflowError("One or more remote workflow agents were not found", 404)
 
         tool_ids = list({item.http_tool_id for item in steps if item.http_tool_id is not None})
         if tool_ids:

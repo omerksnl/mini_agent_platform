@@ -27,6 +27,9 @@ export type Agent = {
   collection_ids: string[];
   managed_agent_ids: string[];
   router_target_ids: string[];
+  managed_remote_agent_ids: string[];
+  router_remote_agent_ids: string[];
+  remote_agent_ids: string[];
   router_ids: string[];
   created_at: string;
   updated_at: string;
@@ -44,6 +47,9 @@ export type AgentInput = {
   collection_ids: string[];
   managed_agent_ids: string[];
   router_target_ids: string[];
+  managed_remote_agent_ids: string[];
+  router_remote_agent_ids: string[];
+  remote_agent_ids: string[];
 };
 
 export type Skill = {
@@ -122,7 +128,7 @@ export type Attachment = {
 export type CollectionDocument = { id: string; original_name: string; content_type: string; size_bytes: number; chunk_count: number; created_at: string };
 export type Collection = { id: string; tenant_id: string; name: string; description: string; documents: CollectionDocument[]; created_at: string; updated_at: string };
 
-export type WorkflowStepType = "agent" | "http_tool" | "system_tool" | "human_wait" | "report";
+export type WorkflowStepType = "agent" | "remote_agent" | "http_tool" | "system_tool" | "human_wait" | "report";
 export type WorkflowRouteCondition = "success" | "failure" | "input_available" | "always";
 export type WorkflowStepInput = {
   step_key: string;
@@ -130,6 +136,7 @@ export type WorkflowStepInput = {
   step_type: WorkflowStepType;
   position: number;
   agent_id: string | null;
+  remote_agent_id: string | null;
   http_tool_id: string | null;
   system_tool_name: string | null;
   config: Record<string, unknown>;

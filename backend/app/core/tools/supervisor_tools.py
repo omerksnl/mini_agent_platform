@@ -4,7 +4,7 @@ from collections.abc import Callable
 from langchain_core.tools import StructuredTool, ToolException
 from pydantic import BaseModel, Field
 
-from app.models import Agent
+from app.models import Agent, RemoteAgent
 
 
 class DelegationInput(BaseModel):
@@ -17,6 +17,11 @@ class DelegationInput(BaseModel):
 def delegation_tool_name(agent: Agent) -> str:
     slug = re.sub(r"[^a-z0-9_]+", "_", agent.name.lower()).strip("_") or "agent"
     return f"delegate_to_{slug}_{str(agent.id)[:8]}"
+
+
+def remote_delegation_tool_name(agent: RemoteAgent) -> str:
+    slug = re.sub(r"[^a-z0-9_]+", "_", agent.name.lower()).strip("_") or "remote_agent"
+    return f"delegate_to_remote_{slug}_{str(agent.id)[:8]}"
 
 
 def build_delegation_tools(
@@ -43,6 +48,36 @@ def build_delegation_tools(
                 f"Its skills: {skill_names}. Its system tools: {system_tools}. "
                 f"Its knowledge collections: {collection_names}. "
                 "Pass complete prior-agent output in task when this step depends on it."
+            ),
+            args_schema=DelegationInput,
+            handle_tool_error=True,
+        ))
+    return tools
+
+
+def build_remote_delegation_tools(
+    supervisor: Agent,
+    delegate: Callable[[RemoteAgent, str], str],
+) -> list[StructuredTool]:
+    tools: list[StructuredTool] = []
+    for remote_agent in supervisor.managed_remote_agents:
+        skill_names = ", ".join(
+            str(skill.get("name") or skill.get("id") or "skill")
+            for skill in remote_agent.skills if isinstance(skill, dict)
+        ) or "none"
+
+        def run(task: str, child: RemoteAgent = remote_agent) -> str:
+            try:
+                return delegate(child, task)
+            except Exception as exc:
+                raise ToolException(f"Delegation to remote agent {child.name} failed: {exc}") from exc
+
+        tools.append(StructuredTool.from_function(
+            func=run,
+            name=remote_delegation_tool_name(remote_agent),
+            description=(
+                f"Delegate a self-contained task through A2A to remote agent '{remote_agent.name}'. "
+                f"Public description: {remote_agent.description or 'none'}. Skills: {skill_names}."
             ),
             args_schema=DelegationInput,
             handle_tool_error=True,

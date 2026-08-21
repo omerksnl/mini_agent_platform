@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Agent, AgentPromptVersion, AgentSkill, Skill
+from app.models import Agent, AgentPromptVersion, AgentSkill, RemoteAgent, Skill
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.core.services.tool_service import ToolError, ToolService
 from app.core.services.skill_service import SkillError, SkillService
@@ -41,11 +41,14 @@ class AgentService:
             raise AgentError("Agent not found", status_code=404)
         return agent
 
-    def create_agent(self, tenant_id: UUID, payload: AgentCreate) -> Agent:
+    def create_agent(self, tenant_id: UUID, payload: AgentCreate, user_id: UUID | None = None) -> Agent:
         self._validate_system_tools(payload.system_tools)
         self._validate_relationship_shape(
-            payload.agent_type, payload.managed_agent_ids, payload.router_target_ids
+            payload.agent_type, payload.managed_agent_ids, payload.router_target_ids,
+            payload.managed_remote_agent_ids, payload.router_remote_agent_ids,
         )
+        if payload.agent_type != "normal" and payload.remote_agent_ids:
+            raise AgentError("Only normal agents can use remote agents as tools")
         try:
             http_tools = ToolService(self.db).get_tools(payload.tool_ids, tenant_id)
         except ToolError as exc:
@@ -54,6 +57,9 @@ class AgentService:
         collections = self._get_collections(payload.collection_ids, tenant_id)
         managed_agents = self._get_managed_agents(payload.managed_agent_ids, tenant_id)
         router_targets = self._get_router_targets(payload.router_target_ids, tenant_id)
+        managed_remote_agents = self._get_remote_agents(payload.managed_remote_agent_ids, tenant_id, user_id)
+        router_remote_targets = self._get_remote_agents(payload.router_remote_agent_ids, tenant_id, user_id)
+        remote_agent_tools = self._get_remote_agents(payload.remote_agent_ids, tenant_id, user_id)
         self._validate_skill_requirements(skills, payload.system_tools, http_tools)
         agent = Agent(
             tenant_id=tenant_id,
@@ -67,6 +73,9 @@ class AgentService:
             collections=collections,
             managed_agents=managed_agents,
             router_targets=router_targets,
+            managed_remote_agents=managed_remote_agents,
+            router_remote_targets=router_remote_targets,
+            remote_agent_tools=remote_agent_tools,
         )
         agent.skill_links = [AgentSkill(skill=skill, position=index) for index, skill in enumerate(skills)]
         self.db.add(agent)
@@ -77,7 +86,7 @@ class AgentService:
         self.db.refresh(agent)
         return agent
 
-    def update_agent(self, agent_id: UUID, tenant_id: UUID, payload: AgentUpdate) -> Agent:
+    def update_agent(self, agent_id: UUID, tenant_id: UUID, payload: AgentUpdate, user_id: UUID | None = None) -> Agent:
         agent = self.get_agent(agent_id, tenant_id)
         agent_prompt_before_update = agent.system_prompt
         data = payload.model_dump(exclude_unset=True)
@@ -86,13 +95,21 @@ class AgentService:
         collection_ids = data.pop("collection_ids", None)
         managed_agent_ids = data.pop("managed_agent_ids", None)
         router_target_ids = data.pop("router_target_ids", None)
+        managed_remote_agent_ids = data.pop("managed_remote_agent_ids", None)
+        router_remote_agent_ids = data.pop("router_remote_agent_ids", None)
+        remote_agent_ids = data.pop("remote_agent_ids", None)
         next_prompt = data.get("system_prompt")
         target_type = data.get("agent_type", agent.agent_type)
+        requested_remote_tools = remote_agent_ids if remote_agent_ids is not None else agent.remote_agent_ids
+        if target_type != "normal" and requested_remote_tools:
+            raise AgentError("Only normal agents can use remote agents as tools")
         if target_type != "normal" and (agent.supervisors or agent.routers):
             raise AgentError("An agent used by a multi-agent system must remain a normal agent")
         requested_managed = managed_agent_ids if managed_agent_ids is not None else agent.managed_agent_ids
         requested_targets = router_target_ids if router_target_ids is not None else agent.router_target_ids
-        self._validate_relationship_shape(target_type, requested_managed, requested_targets)
+        requested_managed_remote = managed_remote_agent_ids if managed_remote_agent_ids is not None else agent.managed_remote_agent_ids
+        requested_router_remote = router_remote_agent_ids if router_remote_agent_ids is not None else agent.router_remote_agent_ids
+        self._validate_relationship_shape(target_type, requested_managed, requested_targets, requested_managed_remote, requested_router_remote)
         if "system_tools" in data:
             self._validate_system_tools(data["system_tools"])
         if tool_ids is not None:
@@ -114,6 +131,12 @@ class AgentService:
             agent.managed_agents = self._get_managed_agents(managed_agent_ids, tenant_id, supervisor_id=agent.id)
         if router_target_ids is not None:
             agent.router_targets = self._get_router_targets(router_target_ids, tenant_id, router_id=agent.id)
+        if managed_remote_agent_ids is not None:
+            agent.managed_remote_agents = self._get_remote_agents(managed_remote_agent_ids, tenant_id, user_id)
+        if router_remote_agent_ids is not None:
+            agent.router_remote_targets = self._get_remote_agents(router_remote_agent_ids, tenant_id, user_id)
+        if remote_agent_ids is not None:
+            agent.remote_agent_tools = self._get_remote_agents(remote_agent_ids, tenant_id, user_id)
         for key, value in data.items():
             setattr(agent, key, value)
         if next_prompt is not None and next_prompt != agent_prompt_before_update:
@@ -247,17 +270,39 @@ class AgentService:
             raise AgentError("Routers can target only normal agents")
         return ordered
 
+    def _get_remote_agents(self, remote_ids: list[UUID], tenant_id: UUID, user_id: UUID | None) -> list[RemoteAgent]:
+        if not remote_ids:
+            return []
+        if user_id is None:
+            raise AgentError("User context is required for remote agents")
+        unique_ids = list(dict.fromkeys(remote_ids))
+        if len(unique_ids) != len(remote_ids):
+            raise AgentError("Remote agent selection contains duplicates")
+        items = list(self.db.scalars(select(RemoteAgent).where(
+            RemoteAgent.id.in_(unique_ids),
+            RemoteAgent.tenant_id == tenant_id,
+            RemoteAgent.owner_user_id == user_id,
+        )).all())
+        if len(items) != len(unique_ids):
+            raise AgentError("One or more remote agents were not found", 404)
+        by_id = {item.id: item for item in items}
+        return [by_id[item_id] for item_id in unique_ids]
+
     @staticmethod
     def _validate_relationship_shape(
         agent_type: str,
         managed_agent_ids: list,
         router_target_ids: list,
+        managed_remote_agent_ids: list | None = None,
+        router_remote_agent_ids: list | None = None,
     ) -> None:
-        if agent_type == "normal" and (managed_agent_ids or router_target_ids):
+        managed_remote_agent_ids = managed_remote_agent_ids or []
+        router_remote_agent_ids = router_remote_agent_ids or []
+        if agent_type == "normal" and (managed_agent_ids or router_target_ids or managed_remote_agent_ids or router_remote_agent_ids):
             raise AgentError("Normal agents cannot manage or route to other agents")
-        if agent_type == "supervisor" and router_target_ids:
+        if agent_type == "supervisor" and (router_target_ids or router_remote_agent_ids):
             raise AgentError("Supervisors cannot have router targets")
-        if agent_type == "router" and managed_agent_ids:
+        if agent_type == "router" and (managed_agent_ids or managed_remote_agent_ids):
             raise AgentError("Routers cannot manage supervisor agents")
 
     @staticmethod

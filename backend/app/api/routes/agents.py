@@ -76,7 +76,7 @@ def create_agent(
     current: CurrentUser = Depends(get_current_user),
 ) -> AgentResponse:
     try:
-        agent = AgentService(db).create_agent(current.tenant_id, payload)
+        agent = AgentService(db).create_agent(current.tenant_id, payload, current.id)
     except AgentError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return AgentResponse.model_validate(agent)
@@ -103,7 +103,7 @@ def update_agent(
     current: CurrentUser = Depends(get_current_user),
 ) -> AgentResponse:
     try:
-        agent = AgentService(db).update_agent(agent_id, current.tenant_id, payload)
+        agent = AgentService(db).update_agent(agent_id, current.tenant_id, payload, current.id)
     except AgentError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return AgentResponse.model_validate(agent)

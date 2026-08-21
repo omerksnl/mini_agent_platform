@@ -7,6 +7,7 @@ import { AppHeader } from "../components/AppHeader";
 import {
   api,
   type Agent,
+  type RemoteAgent,
   type Workflow,
   type WorkflowInput,
   type WorkflowRouteCondition,
@@ -82,10 +83,20 @@ function stepFromAgent(agent: Agent, nodes: StudioNode[], point: Point): StudioN
     step_type: "agent",
     position: nodes.length,
     agent_id: agent.id,
+    remote_agent_id: null,
     http_tool_id: null,
     system_tool_name: null,
     config: { task_instructions: "", collection_mode: "search", input_artifact_keys: [] },
     point,
+  };
+}
+
+function stepFromRemoteAgent(agent: RemoteAgent, nodes: StudioNode[], point: Point): StudioNode {
+  return {
+    step_key: nodeKey(agent.name, nodes), name: agent.name, step_type: "remote_agent",
+    position: nodes.length, agent_id: null, remote_agent_id: agent.id,
+    http_tool_id: null, system_tool_name: null,
+    config: { task_instructions: "", input_artifact_keys: [] }, point,
   };
 }
 
@@ -98,6 +109,7 @@ function stepFromKind(kind: NodeKind, nodes: StudioNode[], point: Point): Studio
     step_type: kind,
     position: nodes.length,
     agent_id: null,
+    remote_agent_id: null,
     http_tool_id: null,
     system_tool_name: null,
     config: isHuman
@@ -164,6 +176,7 @@ function validateGraph(nodes: StudioNode[], routes: StudioRoute[]): string[] {
 export function WorkflowStudioPage() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [remoteAgents, setRemoteAgents] = useState<RemoteAgent[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -192,9 +205,10 @@ export function WorkflowStudioPage() {
   async function load() {
     setLoading(true);
     try {
-      const [workflowItems, agentItems] = await Promise.all([api.listWorkflows(), api.listAgents()]);
+      const [workflowItems, agentItems, remoteItems] = await Promise.all([api.listWorkflows(), api.listAgents(), api.listRemoteAgents()]);
       setWorkflows(workflowItems);
       setAgents(agentItems);
+      setRemoteAgents(remoteItems);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Workflow data could not be loaded");
     } finally { setLoading(false); }
@@ -235,6 +249,8 @@ export function WorkflowStudioPage() {
     }
     const agent = agents.find((item) => item.id === token && item.agent_type === "normal");
     if (agent) setNodes((current) => [...current, stepFromAgent(agent, current, point)]);
+    const remote = remoteAgents.find((item) => `remote:${item.id}` === token);
+    if (remote) setNodes((current) => [...current, stepFromRemoteAgent(remote, current, point)]);
   }
 
   function dropOnCanvas(event: DragEvent<HTMLDivElement>) {
@@ -364,7 +380,7 @@ export function WorkflowStudioPage() {
         {loading ? <p>Loading...</p> : workflows.length ? <ul>{workflows.map((workflow) => <li className="studio-workflow-item" key={workflow.id}><button className={editingId === workflow.id ? "selected" : ""} type="button" onClick={() => openWorkflow(workflow)}><strong>{workflow.name}</strong><small>{workflow.steps.length} nodes · {workflow.routes.length} connections</small></button><span className="studio-workflow-actions"><button className="studio-workflow-run" type="button" disabled={!workflow.is_active} aria-label={`Run ${workflow.name}`} title="Run workflow" onClick={() => openRunner(workflow)}>▶</button><button className="studio-workflow-delete" type="button" aria-label={`Delete ${workflow.name}`} title="Delete workflow" onClick={() => setPendingDelete(workflow)}>×</button></span></li>)}</ul> : <p>No workflows yet.</p>}
         <hr />
         <h2>Node list</h2><p className="field-hint">Drag a node onto the canvas.</p>
-        <div className="studio-palette-list">{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <div className="palette-node" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", agent.id)} key={agent.id}><strong>{agent.name}</strong><small>{agent.model}</small></div>)}<div className="palette-node human" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", "human_wait")}><strong>Human wait</strong><small>Pause for user input</small></div><div className="palette-node report" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", "report")}><strong>PDF report</strong><small>Render an artifact</small></div></div>
+        <div className="studio-palette-list">{agents.filter((agent) => agent.agent_type === "normal").map((agent) => <div className="palette-node" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", agent.id)} key={agent.id}><strong>{agent.name}</strong><small>{agent.model}</small></div>)}{remoteAgents.map((agent) => <div className="palette-node remote" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", `remote:${agent.id}`)} key={`remote-${agent.id}`}><strong>{agent.name} · A2A</strong><small>{agent.description || "Remote specialist"}</small></div>)}<div className="palette-node human" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", "human_wait")}><strong>Human wait</strong><small>Pause for user input</small></div><div className="palette-node report" draggable onDragStart={(event) => event.dataTransfer.setData("application/x-workflow-node", "report")}><strong>PDF report</strong><small>Render an artifact</small></div></div>
         <div className="studio-delete-drop" onDragOver={(event) => { if (event.dataTransfer.types.includes("application/x-workflow-move")) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={(event) => { event.preventDefault(); const key = event.dataTransfer.getData("application/x-workflow-move"); if (key) removeNode(key); }}>
           <span aria-hidden="true">×</span><strong>Remove from workflow</strong><small>Drop a canvas node here</small>
         </div>
@@ -401,7 +417,7 @@ export function WorkflowStudioPage() {
             </article>; })}
           </div>
         </div>
-        {selectedNode ? <section className="studio-node-settings"><div className="panel-head"><div><h2>Node settings</h2><p>{selectedNode.step_key}</p></div><button type="button" className="btn btn-danger btn-compact" onClick={() => removeNode(selectedNode.step_key)}>Remove node</button></div><label>Artifact name<input value={selectedNode.name} onChange={(event) => patchNode(selectedNode.step_key, { name: event.target.value })} /></label>{selectedNode.step_type === "agent" ? <label>Task instructions<textarea rows={4} value={String(selectedNode.config.task_instructions ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { task_instructions: event.target.value })} /></label> : null}{selectedNode.step_type === "human_wait" ? <label>Required input<textarea rows={3} value={String(selectedNode.config.required_input ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { required_input: event.target.value })} /></label> : null}{selectedNode.step_type === "report" ? <div className="workflow-step-grid"><label>Input artifact key<input value={String(selectedNode.config.input_artifact_key ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { input_artifact_key: event.target.value })} /></label><label>Template<select value={String(selectedNode.config.template_id ?? "two_column")} onChange={(event) => patchConfig(selectedNode.step_key, { template_id: event.target.value })}><option value="two_column">Two column</option><option value="blank_markdown">Blank Markdown</option></select></label></div> : null}<div className="studio-route-settings">{routes.filter((route) => route.source_step_key === selectedNode.step_key).map((route, index) => <div key={`${route.target_step_key}-${index}`}><span>→ {nodes.find((node) => node.step_key === route.target_step_key)?.name}</span><select value={route.condition} onChange={(event) => setRoutes((current) => current.map((item) => item === route ? { ...item, condition: event.target.value as WorkflowRouteCondition } : item))}><option value="success">success</option><option value="failure">failure</option><option value="input_available">input available</option><option value="always">always</option></select><button type="button" aria-label="Remove connection" onClick={() => setRoutes((current) => current.filter((item) => item !== route))}>×</button></div>)}</div></section> : null}
+        {selectedNode ? <section className="studio-node-settings"><div className="panel-head"><div><h2>Node settings</h2><p>{selectedNode.step_key}</p></div><button type="button" className="btn btn-danger btn-compact" onClick={() => removeNode(selectedNode.step_key)}>Remove node</button></div><label>Artifact name<input value={selectedNode.name} onChange={(event) => patchNode(selectedNode.step_key, { name: event.target.value })} /></label>{selectedNode.step_type === "agent" || selectedNode.step_type === "remote_agent" ? <label>Task instructions<textarea rows={4} value={String(selectedNode.config.task_instructions ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { task_instructions: event.target.value })} /></label> : null}{selectedNode.step_type === "human_wait" ? <label>Required input<textarea rows={3} value={String(selectedNode.config.required_input ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { required_input: event.target.value })} /></label> : null}{selectedNode.step_type === "report" ? <div className="workflow-step-grid"><label>Input artifact key<input value={String(selectedNode.config.input_artifact_key ?? "")} onChange={(event) => patchConfig(selectedNode.step_key, { input_artifact_key: event.target.value })} /></label><label>Template<select value={String(selectedNode.config.template_id ?? "two_column")} onChange={(event) => patchConfig(selectedNode.step_key, { template_id: event.target.value })}><option value="two_column">Two column</option><option value="blank_markdown">Blank Markdown</option></select></label></div> : null}<div className="studio-route-settings">{routes.filter((route) => route.source_step_key === selectedNode.step_key).map((route, index) => <div key={`${route.target_step_key}-${index}`}><span>→ {nodes.find((node) => node.step_key === route.target_step_key)?.name}</span><select value={route.condition} onChange={(event) => setRoutes((current) => current.map((item) => item === route ? { ...item, condition: event.target.value as WorkflowRouteCondition } : item))}><option value="success">success</option><option value="failure">failure</option><option value="input_available">input available</option><option value="always">always</option></select><button type="button" aria-label="Remove connection" onClick={() => setRoutes((current) => current.filter((item) => item !== route))}>×</button></div>)}</div></section> : null}
         <div className="workflow-studio-footer"><span>{connectingFrom ? "Select the input port of the next node." : graphErrors[0] ?? `${nodes.length} nodes · ${routes.length} connections`}</span><div><Link className="btn" to="/multi-agent">Legacy workflow view</Link><button className="btn btn-primary" disabled={saving || Boolean(graphErrors.length)}>{saving ? "Saving..." : "Save workflow"}</button></div></div>
       </form>
     </main>

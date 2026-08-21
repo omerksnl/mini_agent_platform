@@ -175,6 +175,7 @@ class ConversationService:
                     if (
                         conversation.agent.collections
                         or conversation.agent.agent_type in {"supervisor", "router"}
+                        or conversation.agent.remote_agent_tools
                         or "text_to_pdf" in conversation.agent.system_tools
                     ):
                         llm_result = llm_client.complete(

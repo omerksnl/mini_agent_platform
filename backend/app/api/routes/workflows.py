@@ -53,7 +53,7 @@ def create_workflow(
     current: CurrentUser = Depends(get_current_user),
 ) -> WorkflowResponse:
     try:
-        workflow = WorkflowService(db).create_workflow(current.tenant_id, payload)
+        workflow = WorkflowService(db).create_workflow(current.tenant_id, payload, current.id)
     except WorkflowError as exc:
         raise_workflow_error(exc)
     return WorkflowResponse.model_validate(workflow)
@@ -164,7 +164,7 @@ def update_workflow(
 ) -> WorkflowResponse:
     try:
         workflow = WorkflowService(db).update_workflow(
-            workflow_id, current.tenant_id, payload
+            workflow_id, current.tenant_id, payload, current.id
         )
     except WorkflowError as exc:
         raise_workflow_error(exc)

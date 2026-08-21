@@ -24,7 +24,9 @@ from sqlalchemy.orm import Session
 from app.core.tools.pdf_tools import build_pdf_to_text_tool
 from app.core.tools.text_to_pdf_tools import build_text_to_pdf_tool
 from app.core.tools.collection_tools import build_collection_search_tool
-from app.core.tools.supervisor_tools import build_delegation_tools
+from app.core.tools.supervisor_tools import build_delegation_tools, build_remote_delegation_tools
+from app.core.tools.remote_agent_tools import build_remote_agent_tools, remote_agent_tool_name
+from app.core.services.remote_agent_service import RemoteAgentService
 from app.core.candidate_profile import normalize_candidate_profile_json
 from app.core.observability import build_langfuse_handler, langfuse_metadata
 
@@ -131,14 +133,16 @@ class OpenRouterLLMClient:
     ) -> LLMResult:
         is_supervisor = agent.agent_type == "supervisor"
         is_router = agent.agent_type == "router"
-        if is_supervisor and not agent.managed_agents:
+        if is_supervisor and not (agent.managed_agents or agent.managed_remote_agents):
             raise LLMError("This supervisor has no managed agents")
         if is_supervisor and db is None:
             raise LLMError("Supervisor database context is unavailable")
-        if is_router and not agent.router_targets:
+        if is_router and not (agent.router_targets or agent.router_remote_targets):
             raise LLMError("This router has no target agents")
         if is_router and db is None:
             raise LLMError("Router database context is unavailable")
+        if agent.remote_agent_tools and db is None:
+            raise LLMError("Remote agent database context is unavailable")
         cost_callback = ApiCostCallbackHandler(
             self.settings.llm_input_cost_per_million_usd,
             self.settings.llm_output_cost_per_million_usd,
@@ -196,6 +200,19 @@ class OpenRouterLLMClient:
         selected_tools = [*selected_system_tools, *build_http_tools(http_tools or [])]
         used_agents: list[str] = []
         delegated_cost_usd = 0.0
+        if agent.remote_agent_tools:
+            def call_remote_tool(target, task: str) -> str:
+                nonlocal delegated_cost_usd
+                text, _, cost = RemoteAgentService(db).send(
+                    target.id, target.tenant_id, target.owner_user_id, task.strip(),
+                    [item.id for item in attachments or []],
+                )
+                if target.name not in used_agents:
+                    used_agents.append(target.name)
+                delegated_cost_usd += cost
+                return text
+
+            selected_tools.extend(build_remote_agent_tools(agent.remote_agent_tools, call_remote_tool))
         has_collection_content = any(
             document.chunks
             for collection in agent.collections
@@ -235,7 +252,31 @@ class OpenRouterLLMClient:
 
             selected_tools.extend(build_delegation_tools(agent, delegate_to_child))
 
-        if attachments and not is_supervisor:
+            def delegate_to_remote(child, task: str) -> str:
+                nonlocal delegated_cost_usd
+                text, _, cost = RemoteAgentService(db).send(
+                    child.id, child.tenant_id, child.owner_user_id, task.strip(),
+                    [item.id for item in attachments],
+                )
+                if child.name not in used_agents:
+                    used_agents.append(child.name)
+                delegated_cost_usd += cost
+                return text
+
+            selected_tools.extend(build_remote_delegation_tools(agent, delegate_to_remote))
+
+        if attachments and not is_supervisor and "pdf_to_text" not in agent.system_tools and agent.remote_agent_tools:
+            latest_user = next(
+                (item["content"] for item in reversed(messages) if item["role"] == "user"),
+                "Process the attached PDF using the appropriate remote specialist",
+            )
+            required = (
+                [remote_agent_tool_name(agent.remote_agent_tools[0])]
+                if len(agent.remote_agent_tools) == 1 else []
+            )
+            routing = RoutingDecision(request_parts=[latest_user], required_tool_names=required)
+            selected_skills = []
+        elif attachments and not is_supervisor:
             if "pdf_to_text" not in agent.system_tools:
                 raise LLMError("Enable pdf_to_text on this agent before sending a PDF")
             selected_skills = [skill for skill in agent.skills if skill.name == "cv_extraction"]
@@ -367,7 +408,7 @@ class OpenRouterLLMClient:
             content = normalize_candidate_profile_json(content)
         return LLMResult(
             content=content,
-            used_tools=[name for name in used_tools if not name.startswith("delegate_to_")],
+            used_tools=[name for name in used_tools if not name.startswith(("delegate_to_", "ask_remote_"))],
             used_skills=[skill.name for skill in selected_skills],
             used_agents=used_agents,
             api_cost_usd=round(cost_callback.total_cost_usd + delegated_cost_usd, 8),
@@ -385,8 +426,10 @@ class OpenRouterLLMClient:
         metadata: dict[str, Any],
     ) -> LLMResult:
         catalog = "\n\n".join(
-            f"TARGET ID: {target.id}\nNAME: {target.name}\nSPECIALTY: {target.system_prompt[:1200]}"
-            for target in router_agent.router_targets
+            [f"TARGET ID: local:{target.id}\nNAME: {target.name}\nSPECIALTY: {target.system_prompt[:1200]}"
+             for target in router_agent.router_targets]
+            + [f"TARGET ID: remote:{target.id}\nNAME: {target.name}\nSPECIALTY: {target.description[:1200]}"
+               for target in router_agent.router_remote_targets]
         )
         latest_user = next(
             (item["content"] for item in reversed(messages) if item["role"] == "user"), ""
@@ -412,17 +455,27 @@ class OpenRouterLLMClient:
         except Exception as exc:
             raise LLMError("The agent router failed") from exc
 
-        target = next(
-            (item for item in router_agent.router_targets if str(item.id) == decision.target_agent_id),
-            None,
-        )
-        if target is None:
+        selected_id = decision.target_agent_id or ""
+        target = next((item for item in router_agent.router_targets if selected_id in {str(item.id), f"local:{item.id}"}), None)
+        remote_target = next((item for item in router_agent.router_remote_targets if selected_id == f"remote:{item.id}"), None)
+        if target is None and remote_target is None:
             question = (decision.clarification_question or "What kind of help would you like?").strip()
             return LLMResult(
                 content=question,
                 used_tools=[],
                 used_agents=[],
                 api_cost_usd=round(cost_callback.total_cost_usd, 8),
+            )
+
+        if remote_target is not None:
+            content, _, remote_cost = RemoteAgentService(db).send(
+                remote_target.id, remote_target.tenant_id, remote_target.owner_user_id,
+                latest_user, [item.id for item in attachments],
+            )
+            return LLMResult(
+                content=content,
+                used_tools=[], used_skills=[], used_agents=[remote_target.name],
+                api_cost_usd=round(cost_callback.total_cost_usd + remote_cost, 8),
             )
 
         forwarded_attachments = attachments if "pdf_to_text" in target.system_tools else []
