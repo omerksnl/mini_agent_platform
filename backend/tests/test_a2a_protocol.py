@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 import base64
 
-from app.api.deps import get_llm_client
+from app.api.deps import get_llm_client, get_platform_llm_client
 from app.core.services.llm_service import LLMResult
 from app.main import app
 
@@ -76,7 +76,7 @@ def test_published_agent_exposes_card_and_accepts_authenticated_message(client: 
     }
     assert client.post(published.json()["endpoint_url"], json=payload).status_code == 401
 
-    app.dependency_overrides[get_llm_client] = lambda: FakeLLMClient()
+    app.dependency_overrides[get_platform_llm_client] = lambda: FakeLLMClient()
     try:
         response = client.post(
             published.json()["endpoint_url"],
@@ -84,7 +84,7 @@ def test_published_agent_exposes_card_and_accepts_authenticated_message(client: 
             json=payload,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_client, None)
+        app.dependency_overrides.pop(get_platform_llm_client, None)
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == "request-1"
@@ -150,7 +150,7 @@ def test_published_pdf_agent_receives_a2a_file_as_attachment(client: TestClient)
             }},
         ]}},
     }
-    app.dependency_overrides[get_llm_client] = lambda: PdfLLM()
+    app.dependency_overrides[get_platform_llm_client] = lambda: PdfLLM()
     try:
         response = client.post(
             published["endpoint_url"],
@@ -158,6 +158,6 @@ def test_published_pdf_agent_receives_a2a_file_as_attachment(client: TestClient)
             json=payload,
         )
     finally:
-        app.dependency_overrides.pop(get_llm_client, None)
+        app.dependency_overrides.pop(get_platform_llm_client, None)
     assert response.status_code == 200, response.text
     assert response.json()["result"]["parts"][0]["text"] == "CandidateProfile created"

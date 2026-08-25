@@ -2095,3 +2095,21 @@ input[type="range"] {
   .workflow-studio-library { max-height: 310px; }
   .workflow-studio-meta { grid-template-columns: 1fr; }
 }
+.provider-settings-card { box-sizing: border-box; width: min(640px, calc(100% - 32px)); margin: 0 auto; padding: 26px; }
+.provider-settings-card h1 { margin: 0 0 6px; color: var(--accent, #e45357); }
+.provider-status { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; margin: 24px 0; padding: 16px; border: 1px solid #d4d4d4; border-radius: 8px; background: #f3f3f3; }
+.provider-status small { color: #999; font-family: monospace; }
+.provider-warning { margin: -10px 0 22px; padding: 15px; border: 1px solid #e3b66e; border-left: 3px solid #d9912f; border-radius: 7px; background: #fff8eb; }
+.provider-warning p { margin: 7px 0 12px; }
+.provider-form { display: grid; gap: 16px; }
+.provider-form label { display: grid; gap: 7px; }
+.provider-form input, .provider-form select { width: 100%; }
+.saved-provider-section { margin-top: 28px; padding-top: 22px; border-top: 1px solid #ddd; }
+.saved-provider-section h2 { margin: 0 0 14px; font-size: 18px; }
+.saved-provider-list { display: grid; gap: 10px; padding: 0; list-style: none; }
+.saved-provider-list li { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px; border: 1px solid #d6d6d6; border-left: 3px solid #bbb; border-radius: 7px; background: #f5f5f5; }
+.saved-provider-list li.active { border-left-color: #49a878; background: #f0f8f4; }
+.saved-provider-list li > div { display: flex; align-items: center; gap: 10px; }
+.saved-provider-list small { color: #aaa; font-family: monospace; }
+.success-note { color: #267650; background: #edf8f2; border: 1px solid #9ed5b8; border-radius: 5px; padding: 12px; }
+@media (max-width: 700px) { .provider-status { grid-template-columns: 1fr; } }

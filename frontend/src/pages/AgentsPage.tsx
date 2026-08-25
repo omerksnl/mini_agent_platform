@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { api, type Agent, type AgentInput, type Collection, type HttpTool, type RemoteAgent, type Skill } from "../api";
+import { api, type Agent, type AgentInput, type AgentProviderAssignment, type Collection, type HttpTool, type ProviderCredential, type RemoteAgent, type Skill } from "../api";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
 import { A2APublishing } from "../components/A2APublishing";
@@ -36,6 +36,9 @@ export function AgentsPage() {
   const [tools, setTools] = useState<HttpTool[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [providerProfiles, setProviderProfiles] = useState<ProviderCredential[]>([]);
+  const [providerAssignments, setProviderAssignments] = useState<AgentProviderAssignment[]>([]);
+  const [selectedProviderProfile, setSelectedProviderProfile] = useState("");
   const [form, setForm] = useState<AgentInput>(emptyForm);
   const [mode, setMode] = useState<PanelMode>("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -58,12 +61,14 @@ export function AgentsPage() {
     setLoading(true);
     setError("");
     try {
-      const [agentList, toolList, skillList, collectionList, remoteList] = await Promise.all([api.listAgents(), api.listTools(), api.listSkills(), api.listCollections(), api.listRemoteAgents()]);
+      const [agentList, toolList, skillList, collectionList, remoteList, profileList, assignmentList] = await Promise.all([api.listAgents(), api.listTools(), api.listSkills(), api.listCollections(), api.listRemoteAgents(), api.listProviderCredentials(), api.listAgentProviderAssignments()]);
       setAgents(agentList);
       setTools(toolList);
       setSkills(skillList);
       setCollections(collectionList);
       setRemoteAgents(remoteList);
+      setProviderProfiles(profileList);
+      setProviderAssignments(assignmentList);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load agents");
     } finally {
@@ -85,6 +90,7 @@ export function AgentsPage() {
     setMode("idle");
     setEditingId(null);
     setForm(emptyForm);
+    setSelectedProviderProfile("");
     setError("");
     if (searchParams.has("edit")) setSearchParams({});
   }
@@ -94,6 +100,7 @@ export function AgentsPage() {
     setMode("create");
     setEditingId(null);
     setForm(emptyForm);
+    setSelectedProviderProfile("");
     setError("");
   }
 
@@ -117,6 +124,7 @@ export function AgentsPage() {
       router_remote_agent_ids: agent.router_remote_agent_ids,
       remote_agent_ids: agent.remote_agent_ids,
     });
+    setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === agent.id)?.credential_id ?? "");
     setError("");
   }
 
@@ -125,11 +133,13 @@ export function AgentsPage() {
     setSaving(true);
     setError("");
     try {
+      let savedAgent: Agent;
       if (mode === "edit" && editingId) {
-        await api.updateAgent(editingId, form);
+        savedAgent = await api.updateAgent(editingId, form);
       } else {
-        await api.createAgent(form);
+        savedAgent = await api.createAgent(form);
       }
+      await api.setAgentProviderAssignment(savedAgent.id, selectedProviderProfile || null);
       closePanel();
       await loadAgents();
     } catch (err) {
@@ -348,6 +358,18 @@ export function AgentsPage() {
                   <span className="field-hint">
                     Models available through the configured OpenRouter account.
                   </span>
+                </label>
+                <label>
+                  AI provider profile
+                  <select value={selectedProviderProfile} onChange={(event) => setSelectedProviderProfile(event.target.value)}>
+                    <option value="">Inherit my active provider</option>
+                    {providerProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name} · {profile.provider === "openai" ? "OpenAI" : "OpenRouter"}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="field-hint">This choice is private to your account, even when the agent is shared inside the tenant.</span>
                 </label>
                 <label>
                   Temperature ({form.temperature.toFixed(1)})

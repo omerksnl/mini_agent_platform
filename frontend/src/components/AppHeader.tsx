@@ -29,6 +29,7 @@ export function AppHeader() {
         <Link className={`nav-link ${active("/multi-agent")}`} to="/multi-agent">Multi-agent</Link>
         <Link className={`nav-link ${active("/workflows")}`} to="/workflows">Workflows</Link>
         <Link className={`nav-link ${active("/chat")}`} to="/chat">Chat</Link>
+        <Link className={`nav-link ${active("/settings/provider")}`} to="/settings/provider">AI provider</Link>
         <button type="button" className="nav-link nav-signout" onClick={logout}>Sign out</button>
       </nav>
     </header>

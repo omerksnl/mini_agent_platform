@@ -142,6 +142,23 @@ export type WorkflowStepInput = {
   config: Record<string, unknown>;
 };
 
+export type ProviderSettings = {
+  provider: "openrouter" | "openai";
+  source: "personal" | "platform";
+  has_personal_key: boolean;
+  masked_key: string | null;
+};
+export type ProviderCredential = {
+  id: string; name: string; provider: "openrouter" | "openai";
+  masked_key: string; is_active: boolean; created_at: string;
+};
+export type AgentProviderAssignment = { agent_id: string; credential_id: string };
+export type ProviderCompatibility = {
+  provider: "openrouter" | "openai";
+  incompatible_agents: string[];
+  recommended_model: string | null;
+};
+
 export type A2APublishResponse = {
   api_key: string;
   agent_card_url: string;
@@ -313,6 +330,46 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     });
+  },
+  getProviderSettings() {
+    return request<ProviderSettings>("/api/provider-settings");
+  },
+  updateProviderSettings(name: string, provider: "openrouter" | "openai", apiKey: string) {
+    return request<ProviderSettings>("/api/provider-settings", {
+      method: "PUT", body: JSON.stringify({ name, provider, api_key: apiKey }),
+    });
+  },
+  clearProviderSettings() {
+    return request<void>("/api/provider-settings", { method: "DELETE" });
+  },
+  testProviderSettings() {
+    return request<{ status: "ok"; provider: "openrouter" | "openai" }>("/api/provider-settings/test", { method: "POST" });
+  },
+  listProviderModels() {
+    return request<Array<{ id: string; label: string }>>("/api/provider-settings/models");
+  },
+  listProviderCredentials() {
+    return request<ProviderCredential[]>("/api/provider-settings/credentials");
+  },
+  listAgentProviderAssignments() {
+    return request<AgentProviderAssignment[]>("/api/provider-settings/agent-assignments");
+  },
+  setAgentProviderAssignment(agentId: string, credentialId: string | null) {
+    return request<void>(`/api/provider-settings/agent-assignments/${agentId}`, {
+      method: "PUT", body: JSON.stringify({ credential_id: credentialId }),
+    });
+  },
+  activateProviderCredential(id: string) {
+    return request<ProviderSettings>(`/api/provider-settings/credentials/${id}/activate`, { method: "POST" });
+  },
+  deleteProviderCredential(id: string) {
+    return request<void>(`/api/provider-settings/credentials/${id}`, { method: "DELETE" });
+  },
+  getProviderCompatibility() {
+    return request<ProviderCompatibility>("/api/provider-settings/compatibility");
+  },
+  migrateProviderModels() {
+    return request<ProviderCompatibility>("/api/provider-settings/compatibility/migrate", { method: "POST" });
   },
   listAgentPromptVersions(id: string) {
     return request<AgentPromptVersion[]>(`/api/agents/${id}/prompt-versions`);

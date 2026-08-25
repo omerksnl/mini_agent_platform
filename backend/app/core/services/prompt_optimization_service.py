@@ -12,6 +12,8 @@ from app.config import get_settings
 from app.core.observability import build_langfuse_handler
 from app.core.services.agent_service import AgentService
 from app.core.services.llm_service import ApiCostCallbackHandler
+from app.core.services.provider_service import ProviderError, ProviderService
+from app.models import User
 
 
 class PromptVersionEvaluation(BaseModel):
@@ -33,9 +35,10 @@ class PromptOptimizationError(Exception):
 
 
 class PromptOptimizationService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, user: User | None = None) -> None:
         self.db = db
         self.settings = get_settings()
+        self.user = user
 
     def evaluate_versions(self, agent_id: UUID, tenant_id: UUID) -> tuple[list[Any], float]:
         service = AgentService(self.db)
@@ -61,6 +64,7 @@ class PromptOptimizationService:
             ),
             f"AGENT CAPABILITIES\n{capabilities}\n\nPROMPT VERSIONS\n{prompt_blocks}",
             agent.model,
+            agent_id=agent.id,
             max_tokens=600,
         )
         by_number = {item.version_number: item for item in result.evaluations}
@@ -99,6 +103,7 @@ class PromptOptimizationService:
                 f"DRAFT PROMPT\n<prompt>\n{draft_prompt}\n</prompt>"
             ),
             agent.model,
+            agent_id=agent.id,
             max_tokens=6000,
         )
         result.rationale = result.rationale[:4]
@@ -111,10 +116,21 @@ class PromptOptimizationService:
         human: str,
         model_name: str,
         *,
+        agent_id: UUID,
         max_tokens: int,
     ) -> tuple[Any, float]:
-        if not self.settings.openrouter_api_key:
-            raise PromptOptimizationError("OpenRouter API key is not configured")
+        try:
+            credentials = (
+                ProviderService(self.db).resolve_for_agent(self.user.id, agent_id)
+                if self.user else ProviderService(self.db).resolve()
+            )
+        except ProviderError as exc:
+            raise PromptOptimizationError(str(exc)) from exc
+        if credentials.provider == "openai":
+            if model_name.startswith("openai/"):
+                model_name = model_name.removeprefix("openai/")
+            elif not model_name.startswith(("gpt-", "o1", "o3", "o4")):
+                raise PromptOptimizationError("Select an OpenAI model before using direct OpenAI")
         callback = ApiCostCallbackHandler(
             self.settings.llm_input_cost_per_million_usd,
             self.settings.llm_output_cost_per_million_usd,
@@ -122,14 +138,16 @@ class PromptOptimizationService:
         callbacks: list[Any] = [callback]
         if langfuse := build_langfuse_handler(self.settings):
             callbacks.append(langfuse)
-        model = ChatOpenAI(
+        model_kwargs: dict[str, Any] = dict(
             model=model_name,
             temperature=0.1,
             max_tokens=max_tokens,
-            api_key=self.settings.openrouter_api_key,
-            base_url=self.settings.openrouter_base_url,
-            default_headers={"X-OpenRouter-Title": self.settings.openrouter_app_title},
-        ).with_structured_output(schema)
+            api_key=credentials.api_key,
+            base_url=credentials.base_url,
+        )
+        if credentials.provider == "openrouter":
+            model_kwargs["default_headers"] = {"X-OpenRouter-Title": self.settings.openrouter_app_title}
+        model = ChatOpenAI(**model_kwargs).with_structured_output(schema)
         try:
             result = model.invoke(
                 [SystemMessage(content=system), HumanMessage(content=human)],

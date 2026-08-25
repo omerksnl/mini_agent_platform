@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import hashlib
 import json
 import re
 from typing import Any, Protocol
@@ -29,6 +30,7 @@ from app.core.tools.remote_agent_tools import build_remote_agent_tools, remote_a
 from app.core.services.remote_agent_service import RemoteAgentService
 from app.core.candidate_profile import normalize_candidate_profile_json
 from app.core.observability import build_langfuse_handler, langfuse_metadata
+from app.core.services.provider_service import ProviderCredentials, ProviderError, ProviderService
 
 
 class LLMError(Exception):
@@ -113,11 +115,51 @@ class OpenRouterLLMClient:
         "do not turn it into an approximate or colloquial time expression."
     )
 
-    def __init__(self) -> None:
+    def __init__(self, credentials: ProviderCredentials | None = None, user_id=None) -> None:
         settings = get_settings()
-        if not settings.openrouter_api_key:
-            raise LLMError("OpenRouter API key is not configured")
         self.settings = settings
+        self.user_id = user_id
+        try:
+            self.credentials = credentials or ProviderService(settings=settings).resolve()
+        except ProviderError as exc:
+            raise LLMError(str(exc)) from exc
+
+    def _model_name(self, configured_model: str, credentials: ProviderCredentials | None = None) -> str:
+        credentials = credentials or getattr(self, "credentials", None)
+        if credentials is None:
+            try:
+                credentials = ProviderService(settings=self.settings).resolve()
+                self.credentials = credentials
+            except ProviderError as exc:
+                raise LLMError(str(exc)) from exc
+        if credentials.provider == "openrouter":
+            return configured_model
+        if configured_model.startswith("openai/"):
+            return configured_model.removeprefix("openai/")
+        if configured_model.startswith(("gpt-", "o1", "o3", "o4")):
+            return configured_model
+        raise LLMError(
+            f"Model '{configured_model}' is not available through direct OpenAI. "
+            "Select an OpenAI model or switch the provider to OpenRouter."
+        )
+
+    def _chat_model(self, configured_model: str, temperature: float, max_tokens: int, credentials: ProviderCredentials | None = None) -> ChatOpenAI:
+        if not hasattr(self, "credentials"):
+            try:
+                self.credentials = ProviderService(settings=self.settings).resolve()
+            except ProviderError as exc:
+                raise LLMError(str(exc)) from exc
+        credentials = credentials or self.credentials
+        kwargs: dict[str, Any] = {
+            "model": self._model_name(configured_model, credentials),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "api_key": credentials.api_key,
+            "base_url": credentials.base_url,
+        }
+        if credentials.provider == "openrouter":
+            kwargs["default_headers"] = {"X-OpenRouter-Title": self.settings.openrouter_app_title}
+        return ChatOpenAI(**kwargs)
 
     def complete(
         self,
@@ -165,14 +207,13 @@ class OpenRouterLLMClient:
             else self.settings.llm_max_tokens
         )
         max_tokens = max_output_tokens or default_max_tokens
-        model = ChatOpenAI(
-            model=agent.model,
-            temperature=agent.temperature,
-            max_tokens=max_tokens,
-            api_key=self.settings.openrouter_api_key,
-            base_url=self.settings.openrouter_base_url,
-            default_headers={"X-OpenRouter-Title": self.settings.openrouter_app_title},
-        )
+        credentials = self.credentials
+        if db is not None and self.user_id is not None:
+            try:
+                credentials = ProviderService(db).resolve_for_agent(self.user_id, agent.id)
+            except ProviderError as exc:
+                raise LLMError(str(exc)) from exc
+        model = self._chat_model(agent.model, agent.temperature, max_tokens, credentials)
         if is_router:
             return self._complete_router(
                 agent,
@@ -331,9 +372,43 @@ class OpenRouterLLMClient:
             required_tool_names.update(skill.required_system_tools)
             required_tool_names.update(tool.name for tool in skill.http_tools)
 
+        # Collection-backed recommendations should not depend on whether a
+        # particular model decides to emit a tool call. The request router has
+        # already established that collection_search is required, so execute
+        # that deterministic retrieval once and ground the answer with its
+        # result. This also avoids a failed answer plus a second paid retry.
+        prefetched_tool_names: list[str] = []
+        prefetched_context = ""
+        if "collection_search" in required_tool_names:
+            collection_tool = next(
+                (tool for tool in selected_tools if getattr(tool, "name", "") == "collection_search"),
+                None,
+            )
+            if collection_tool is not None:
+                latest_user = next(
+                    (item["content"] for item in reversed(messages) if item["role"] == "user"),
+                    "recommendation",
+                )
+                try:
+                    collection_result = collection_tool.invoke({"query": latest_user})
+                except Exception as exc:
+                    raise LLMError("The assigned collection could not be searched") from exc
+                prefetched_tool_names.append("collection_search")
+                required_tool_names.discard("collection_search")
+                selected_tools = [
+                    tool for tool in selected_tools
+                    if getattr(tool, "name", "") != "collection_search"
+                ]
+                prefetched_context = (
+                    "\n\nPREFETCHED COLLECTION SEARCH RESULT\n"
+                    "Use this retrieved collection content as the source of truth for the answer. "
+                    "Do not claim that no collection was searched.\n"
+                    f"{collection_result}"
+                )
+
         system_prompt = self._execution_prompt(
             agent, selected_skills, required_tool_names, unavailable_skill_tools
-        )
+        ) + prefetched_context
         result_messages = self._invoke_agent(
             model,
             selected_tools,
@@ -347,7 +422,7 @@ class OpenRouterLLMClient:
         content = self._last_assistant_text(result_messages)
         if not content:
             raise LLMError("The language model returned an empty response")
-        used_tools = self._used_tool_names(result_messages)
+        used_tools = [*prefetched_tool_names, *self._used_tool_names(result_messages)]
         missing_tools = sorted(required_tool_names - set(used_tools))
         validation = self._validate_response(
             model,
@@ -379,7 +454,7 @@ class OpenRouterLLMClient:
             content = self._last_assistant_text(result_messages)
             if not content:
                 raise LLMError("The language model returned an empty response")
-            used_tools = self._used_tool_names(result_messages)
+            used_tools = [*prefetched_tool_names, *self._used_tool_names(result_messages)]
             missing_tools = sorted(required_tool_names - set(used_tools))
             validation = self._validate_response(
                 model,
@@ -445,8 +520,8 @@ class OpenRouterLLMClient:
                     f"{router_agent.system_prompt}\n\n"
                     "Select exactly one target agent that best matches the latest user request. "
                     "Use the recent conversation to understand rejection phrases such as 'another one' or 'I did not like it'. "
-                    "Use only a TARGET ID from the catalog. Only leave target_agent_id empty when the router instructions explicitly permit a clarification question. "
-                    "When the instructions require an immediate or default selection, select a target even if preferences are incomplete. "
+                    "Use only a TARGET ID from the catalog and always select exactly one target. "
+                    "Never ask a clarification question. Select the closest target even if preferences are incomplete or the request is vague. "
                     "A choice menu may contain up to four short options when the router instructions request it. "
                     "Never answer the user's request yourself.\n\nTARGET AGENTS\n" + catalog
                 )),
@@ -459,13 +534,13 @@ class OpenRouterLLMClient:
         target = next((item for item in router_agent.router_targets if selected_id in {str(item.id), f"local:{item.id}"}), None)
         remote_target = next((item for item in router_agent.router_remote_targets if selected_id == f"remote:{item.id}"), None)
         if target is None and remote_target is None:
-            question = (decision.clarification_question or "What kind of help would you like?").strip()
-            return LLMResult(
-                content=question,
-                used_tools=[],
-                used_agents=[],
-                api_cost_usd=round(cost_callback.total_cost_usd, 8),
-            )
+            available_targets = [*(('local', item) for item in router_agent.router_targets), *(("remote", item) for item in router_agent.router_remote_targets)]
+            if not available_targets:
+                raise LLMError("This router has no target agents")
+            fallback_index = int(hashlib.sha256(latest_user.encode("utf-8")).hexdigest(), 16) % len(available_targets)
+            fallback_type, fallback = available_targets[fallback_index]
+            target = fallback if fallback_type == "local" else None
+            remote_target = fallback if fallback_type == "remote" else None
 
         if remote_target is not None:
             content, _, remote_cost = RemoteAgentService(db).send(
@@ -479,15 +554,39 @@ class OpenRouterLLMClient:
             )
 
         forwarded_attachments = attachments if "pdf_to_text" in target.system_tools else []
+        # Routing metadata is useful to the selector for category rotation, but
+        # it is not part of the conversation and must never reach a specialist
+        # as visible assistant text. Keep the previous answer itself so a
+        # specialist can still understand requests such as "another one".
+        child_messages = [
+            {
+                **item,
+                "content": re.sub(
+                    r"^\[ROUTING HISTORY:[^\]\r\n]*\]\s*",
+                    "",
+                    item["content"],
+                    count=1,
+                    flags=re.IGNORECASE,
+                ),
+            }
+            for item in messages
+        ]
         child_result = self.complete(
             target,
-            messages,
+            child_messages,
             target.http_tools,
             forwarded_attachments,
             db,
         )
+        child_content = re.sub(
+            r"^\[ROUTING HISTORY:[^\]\r\n]*\]\s*",
+            "",
+            child_result.content,
+            count=1,
+            flags=re.IGNORECASE,
+        )
         return LLMResult(
-            content=child_result.content,
+            content=child_content,
             used_tools=child_result.used_tools,
             used_skills=child_result.used_skills,
             used_agents=[target.name, *[name for name in child_result.used_agents if name != target.name]],

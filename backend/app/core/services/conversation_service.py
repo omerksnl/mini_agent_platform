@@ -185,11 +185,14 @@ class ConversationService:
                             db=self.db,
                         )
                     else:
-                        llm_result = llm_client.complete(
-                            conversation.agent,
-                            llm_messages,
-                            conversation.agent.http_tools,
-                        )
+                        if getattr(llm_client, "user_id", None) is not None:
+                            llm_result = llm_client.complete(
+                                conversation.agent, llm_messages, conversation.agent.http_tools, db=self.db
+                            )
+                        else:
+                            llm_result = llm_client.complete(
+                                conversation.agent, llm_messages, conversation.agent.http_tools
+                            )
         except LLMError as exc:
             self.db.rollback()
             raise ConversationError(str(exc), status_code=502) from exc

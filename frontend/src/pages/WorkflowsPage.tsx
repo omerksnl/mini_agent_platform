@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "rea
 import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type Agent, type AgentInput, type RemoteAgent, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
+import { api, type Agent, type AgentInput, type AgentProviderAssignment, type ProviderCredential, type RemoteAgent, type Workflow, type WorkflowInput, type WorkflowRouteCondition, type WorkflowRun, type WorkflowStepType } from "../api";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
 import { HumanFeedback } from "../components/HumanFeedback";
@@ -98,6 +98,9 @@ export function WorkflowsPage() {
   const [items, setItems] = useState<Workflow[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [remoteAgents, setRemoteAgents] = useState<RemoteAgent[]>([]);
+  const [providerProfiles, setProviderProfiles] = useState<ProviderCredential[]>([]);
+  const [providerAssignments, setProviderAssignments] = useState<AgentProviderAssignment[]>([]);
+  const [selectedProviderProfile, setSelectedProviderProfile] = useState("");
   const [form, setForm] = useState<Form>(blank);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showWorkflowForm, setShowWorkflowForm] = useState(false);
@@ -128,8 +131,8 @@ export function WorkflowsPage() {
   async function load() {
     setLoading(true); setError("");
     try {
-      const [workflows, agentList, remoteList] = await Promise.all([api.listWorkflows(), api.listAgents(), api.listRemoteAgents()]);
-      setItems(workflows); setAgents(agentList); setRemoteAgents(remoteList);
+      const [workflows, agentList, remoteList, profileList, assignmentList] = await Promise.all([api.listWorkflows(), api.listAgents(), api.listRemoteAgents(), api.listProviderCredentials(), api.listAgentProviderAssignments()]);
+      setItems(workflows); setAgents(agentList); setRemoteAgents(remoteList); setProviderProfiles(profileList); setProviderAssignments(assignmentList);
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to load workflows"); }
     finally { setLoading(false); }
   }
@@ -158,13 +161,14 @@ export function WorkflowsPage() {
       if (supervisor) {
         setEditingSupervisorId(supervisor.id); setShowSupervisorForm(true);
         setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
+        setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === supervisor.id)?.credential_id ?? "");
       }
     } else if (mode === "router") {
       setExecutionMode("router");
       const router = agents.find((item) => item.id === searchParams.get("edit") && item.agent_type === "router");
       if (router) openRouterEditor(router);
     }
-  }, [agents, searchParams]);
+  }, [agents, providerAssignments, searchParams]);
 
   function updateStep(index: number, patch: Partial<StepForm>) {
     setForm((current) => ({ ...current, steps: current.steps.map((step, i) => i === index ? { ...step, ...patch } : step) }));
@@ -282,13 +286,14 @@ export function WorkflowsPage() {
   }
   async function createSupervisor(event: FormEvent) {
     event.preventDefault(); setSavingSupervisor(true); setError("");
-    try { if (editingSupervisorId) await api.updateAgent(editingSupervisorId, { ...supervisorForm, agent_type: "supervisor" }); else await api.createAgent({ ...supervisorForm, agent_type: "supervisor" }); setSupervisorForm(blankSupervisor); setEditingSupervisorId(null); setShowSupervisorForm(false); await load(); }
+    try { const saved = editingSupervisorId ? await api.updateAgent(editingSupervisorId, { ...supervisorForm, agent_type: "supervisor" }) : await api.createAgent({ ...supervisorForm, agent_type: "supervisor" }); await api.setAgentProviderAssignment(saved.id, selectedProviderProfile || null); setSupervisorForm(blankSupervisor); setSelectedProviderProfile(""); setEditingSupervisorId(null); setShowSupervisorForm(false); await load(); }
     catch (err) { setError(err instanceof Error ? err.message : "Supervisor could not be created"); }
     finally { setSavingSupervisor(false); }
   }
   function openSupervisorEditor(supervisor: Agent) {
     setEditingSupervisorId(supervisor.id); setShowSupervisorForm(true);
     setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
+    setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === supervisor.id)?.credential_id ?? "");
     setSearchParams({ mode: "supervisor", edit: supervisor.id });
   }
   function toggleRouter(id: string) {
@@ -296,13 +301,14 @@ export function WorkflowsPage() {
   }
   async function saveRouter(event: FormEvent) {
     event.preventDefault(); setSavingRouter(true); setError("");
-    try { if (editingRouterId) await api.updateAgent(editingRouterId, { ...routerForm, agent_type: "router" }); else await api.createAgent({ ...routerForm, agent_type: "router" }); setRouterForm(blankRouter); setEditingRouterId(null); setShowRouterForm(false); await load(); }
+    try { const saved = editingRouterId ? await api.updateAgent(editingRouterId, { ...routerForm, agent_type: "router" }) : await api.createAgent({ ...routerForm, agent_type: "router" }); await api.setAgentProviderAssignment(saved.id, selectedProviderProfile || null); setRouterForm(blankRouter); setSelectedProviderProfile(""); setEditingRouterId(null); setShowRouterForm(false); await load(); }
     catch (err) { setError(err instanceof Error ? err.message : "Router could not be saved"); }
     finally { setSavingRouter(false); }
   }
   function openRouterEditor(router: Agent) {
     setEditingRouterId(router.id); setShowRouterForm(true);
     setRouterForm({ name: router.name, agent_type: "router", system_prompt: router.system_prompt, model: router.model, temperature: router.temperature, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: router.router_target_ids, managed_remote_agent_ids: [], router_remote_agent_ids: router.router_remote_agent_ids, remote_agent_ids: [] });
+    setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === router.id)?.credential_id ?? "");
     setSearchParams({ mode: "router", edit: router.id });
   }
   function openRunner(workflow: Workflow) {
@@ -380,10 +386,11 @@ export function WorkflowsPage() {
       </form>}</section>
     </main> : null}
     {executionMode === "router" ? <main className="box panel">
-      <div className="panel-head"><div><h1>Router systems</h1><p>A router selects exactly one normal agent for each request.</p></div><button className="btn btn-primary" type="button" onClick={() => { setEditingRouterId(null); setRouterForm(blankRouter); setShowRouterForm(true); setSearchParams({ mode: "router" }); }}>New router</button></div>
+      <div className="panel-head"><div><h1>Router systems</h1><p>A router selects exactly one normal agent for each request.</p></div><button className="btn btn-primary" type="button" onClick={() => { setEditingRouterId(null); setRouterForm(blankRouter); setSelectedProviderProfile(""); setShowRouterForm(true); setSearchParams({ mode: "router" }); }}>New router</button></div>
       {showRouterForm ? <form className="stack supervisor-create-form multi-agent-edit-form" onSubmit={saveRouter}>
         <div className="panel-accent multi-agent-form-accent"><div className="panel-head"><div><h2>{editingRouterId ? "Edit router" : "New router"}</h2><p>Model, routing instructions, targets, and sharing.</p></div><button type="button" className="icon-close" onClick={() => { setShowRouterForm(false); setEditingRouterId(null); setRouterForm(blankRouter); setSearchParams({ mode: "router" }); }}>×</button></div></div>
         <div className="workflow-step-grid"><label>Name<input required value={routerForm.name} onChange={(event) => setRouterForm({ ...routerForm, name: event.target.value })} /></label><label>Model<select value={routerForm.model} onChange={(event) => setRouterForm({ ...routerForm, model: event.target.value })}>{MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.provider}</option>)}</select></label></div>
+        <label>AI provider profile<select value={selectedProviderProfile} onChange={(event) => setSelectedProviderProfile(event.target.value)}><option value="">Inherit my active provider</option>{providerProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider === "openai" ? "OpenAI" : "OpenRouter"}</option>)}</select><span className="field-hint">The router and each selected target may use different provider profiles.</span></label>
         <label>Temperature ({routerForm.temperature.toFixed(1)})<input type="range" min={0} max={2} step={0.1} value={routerForm.temperature} onChange={(event) => setRouterForm({ ...routerForm, temperature: Number(event.target.value) })} /></label>
         <label>Routing instructions<textarea rows={6} required value={routerForm.system_prompt} onChange={(event) => setRouterForm({ ...routerForm, system_prompt: event.target.value })} /></label>
         {editingRouterId ? <details className="agent-config-section"><summary><span>Prompt history & evaluation</span><small>Versions, scoring, and AI-assisted drafts</small></summary><div className="agent-config-content"><PromptVersionHistory agentId={editingRouterId} currentPrompt={routerForm.system_prompt} onDraftCreated={(prompt) => setRouterForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => { setRouterForm((current) => ({ ...current, system_prompt: agent.system_prompt })); void load(); }} /></div></details> : null}
@@ -406,10 +413,11 @@ export function WorkflowsPage() {
       })}</ul>}
     </main> : null}
     {executionMode === "supervisor" ? <main className="box panel">
-      <div className="panel-head"><div><h1>Supervisor systems</h1><p>Create supervisors here and open one to see its managed agents.</p></div><button className="btn btn-primary" type="button" onClick={() => { setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setShowSupervisorForm(true); setSearchParams({ mode: "supervisor" }); }}>New supervisor</button></div>
+      <div className="panel-head"><div><h1>Supervisor systems</h1><p>Create supervisors here and open one to see its managed agents.</p></div><button className="btn btn-primary" type="button" onClick={() => { setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSelectedProviderProfile(""); setShowSupervisorForm(true); setSearchParams({ mode: "supervisor" }); }}>New supervisor</button></div>
       {showSupervisorForm ? <form className="stack supervisor-create-form multi-agent-edit-form" onSubmit={createSupervisor}>
         <div className="panel-accent multi-agent-form-accent"><div className="panel-head"><div><h2>{editingSupervisorId ? "Edit supervisor" : "New supervisor"}</h2><p>Model, instructions, managed agents, and sharing.</p></div><button type="button" className="icon-close" onClick={() => { setShowSupervisorForm(false); setEditingSupervisorId(null); setSupervisorForm(blankSupervisor); setSearchParams({ mode: "supervisor" }); }}>×</button></div></div>
         <div className="workflow-step-grid"><label>Name<input required value={supervisorForm.name} onChange={(event) => setSupervisorForm({ ...supervisorForm, name: event.target.value })} /></label><label>Model<select value={supervisorForm.model} onChange={(event) => setSupervisorForm({ ...supervisorForm, model: event.target.value })}>{MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.provider}</option>)}</select></label></div>
+        <label>AI provider profile<select value={selectedProviderProfile} onChange={(event) => setSelectedProviderProfile(event.target.value)}><option value="">Inherit my active provider</option>{providerProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider === "openai" ? "OpenAI" : "OpenRouter"}</option>)}</select><span className="field-hint">The supervisor and each managed agent may use different provider profiles.</span></label>
         <label>Temperature ({supervisorForm.temperature.toFixed(1)})<input type="range" min={0} max={2} step={0.1} value={supervisorForm.temperature} onChange={(event) => setSupervisorForm({ ...supervisorForm, temperature: Number(event.target.value) })} /></label>
         <label>System prompt<textarea rows={6} required value={supervisorForm.system_prompt} onChange={(event) => setSupervisorForm({ ...supervisorForm, system_prompt: event.target.value })} /></label>
         {editingSupervisorId ? <details className="agent-config-section"><summary><span>Prompt history & evaluation</span><small>Versions, scoring, and AI-assisted drafts</small></summary><div className="agent-config-content"><PromptVersionHistory agentId={editingSupervisorId} currentPrompt={supervisorForm.system_prompt} onDraftCreated={(prompt) => setSupervisorForm((current) => ({ ...current, system_prompt: prompt }))} onRestored={(agent) => {

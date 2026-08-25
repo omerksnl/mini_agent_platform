@@ -143,7 +143,7 @@ def evaluate_prompt_versions(
     current: CurrentUser = Depends(get_current_user),
 ) -> PromptEvaluationBatchResponse:
     try:
-        service = PromptOptimizationService(db)
+        service = PromptOptimizationService(db, current.user)
         versions, cost = service.evaluate_versions(agent_id, current.tenant_id)
         agent = AgentService(db).get_agent(agent_id, current.tenant_id)
     except AgentError as exc:
@@ -173,7 +173,7 @@ def improve_prompt(
     current: CurrentUser = Depends(get_current_user),
 ) -> PromptImproveResponse:
     try:
-        result, cost = PromptOptimizationService(db).improve_prompt(
+        result, cost = PromptOptimizationService(db, current.user).improve_prompt(
             agent_id, current.tenant_id, payload.draft_prompt
         )
     except AgentError as exc:

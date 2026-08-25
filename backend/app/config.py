@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_app_title: str = "Mini Agent Platform"
+    llm_provider: str = "openrouter"
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_base_url: str = "https://cloud.langfuse.com"

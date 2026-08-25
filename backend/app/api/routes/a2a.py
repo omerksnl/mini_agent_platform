@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_llm_client
+from app.api.deps import get_platform_llm_client
 from app.core.services.a2a_service import A2AError, A2AService
 from app.core.services.llm_service import LLMClient
 from app.db.session import get_db
@@ -90,7 +90,7 @@ def send_a2a_message(
     authorization: str | None = Header(default=None),
     a2a_version: str | None = Header(default=None, alias="A2A-Version"),
     db: Session = Depends(get_db),
-    llm_client: LLMClient = Depends(get_llm_client),
+    llm_client: LLMClient = Depends(get_platform_llm_client),
 ) -> dict:
     request_id = payload.id
     if a2a_version not in {None, "0.3", "1.0"}:

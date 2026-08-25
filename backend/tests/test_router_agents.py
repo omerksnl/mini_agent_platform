@@ -81,18 +81,31 @@ def test_router_selects_exactly_one_agent(
             def __init__(self) -> None:
                 self.settings = get_settings()
                 self.called: list[str] = []
+                self.forwarded_messages = []
 
             def complete(self, agent, messages, http_tools=None, attachments=None, db=None, **kwargs):
                 self.called.append(agent.name)
-                return LLMResult(content="Watch Arrival.", used_tools=[], api_cost_usd=0.004)
+                self.forwarded_messages = messages
+                return LLMResult(
+                    content="[ROUTING HISTORY: movie_series_agent]\nWatch Arrival.",
+                    used_tools=[],
+                    api_cost_usd=0.004,
+                )
 
         llm = RecordingClient()
         result = llm._complete_router(
-            router, Model(), [{"role": "user", "content": "I want a science-fiction movie"}],
+            router, Model(), [
+                {
+                    "role": "assistant",
+                    "content": "[ROUTING HISTORY: cooking_agent]\nTry a pasta recipe.",
+                },
+                {"role": "user", "content": "I want a science-fiction movie"},
+            ],
             [], db, SimpleNamespace(total_cost_usd=0.001), [], {},
         )
         assert llm.called == ["movie_series_agent"]
         assert result.content == "Watch Arrival."
+        assert llm.forwarded_messages[0]["content"] == "Try a pasta recipe."
         assert result.used_agents == ["movie_series_agent"]
         assert result.api_cost_usd == 0.005
         assert "RECENT CONVERSATION" in Selector.received_messages[-1].content
