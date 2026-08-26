@@ -27,7 +27,7 @@ const emptyForm: AgentInput = {
 };
 
 type PanelMode = "idle" | "create" | "edit" | "remote";
-type RemoteMessage = { role: "user" | "agent"; content: string; attachmentName?: string; apiCostUsd?: number };
+type RemoteMessage = { role: "user" | "agent"; content: string; attachmentName?: string; apiCostUsd?: number; billedTo?: "agent_owner" | "caller"; provider?: "openrouter" | "openai" | null };
 
 export function AgentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -50,6 +50,8 @@ export function AgentsPage() {
   const [showRemoteForm, setShowRemoteForm] = useState(false);
   const [remoteCardUrl, setRemoteCardUrl] = useState("");
   const [remoteApiKey, setRemoteApiKey] = useState("");
+  const [remoteBillingMode, setRemoteBillingMode] = useState<"owner" | "caller">("owner");
+  const [remoteProviderProfile, setRemoteProviderProfile] = useState("");
   const [savingRemote, setSavingRemote] = useState(false);
   const [selectedRemote, setSelectedRemote] = useState<RemoteAgent | null>(null);
   const [remoteDraft, setRemoteDraft] = useState("");
@@ -175,10 +177,17 @@ export function AgentsPage() {
     setSavingRemote(true);
     setError("");
     try {
-      const remote = await api.createRemoteAgent(remoteCardUrl.trim(), remoteApiKey.trim());
+      const remote = await api.createRemoteAgent(
+        remoteCardUrl.trim(),
+        remoteApiKey.trim(),
+        remoteBillingMode,
+        remoteBillingMode === "caller" ? remoteProviderProfile : null,
+      );
       setRemoteAgents((current) => [remote, ...current]);
       setRemoteCardUrl("");
       setRemoteApiKey("");
+      setRemoteBillingMode("owner");
+      setRemoteProviderProfile("");
       setShowRemoteForm(false);
       openRemote(remote);
     } catch (err) {
@@ -225,7 +234,7 @@ export function AgentsPage() {
     try {
       const attachment = pdf ? await api.uploadAttachment(pdf) : null;
       const response = await api.sendRemoteAgentMessage(selectedRemote.id, content, attachment ? [attachment.id] : []);
-      setRemoteMessages((current) => [...current, { role: "agent", content: response.content, apiCostUsd: response.api_cost_usd }]);
+      setRemoteMessages((current) => [...current, { role: "agent", content: response.content, apiCostUsd: response.api_cost_usd, billedTo: response.billed_to, provider: response.provider }]);
     } catch (err) {
       setRemoteDraft(content);
       setRemotePdf(pdf);
@@ -280,7 +289,7 @@ export function AgentsPage() {
           </ul>
           <div className="remote-agent-heading"><div><h2>Remote agents</h2><p>Agents connected through A2A.</p></div><span>{remoteAgents.length}</span></div>
           {remoteAgents.length ? <ul className="agent-list remote-agent-list">{remoteAgents.map((remote) => <li key={remote.id} className={selectedRemote?.id === remote.id ? "active" : ""}>
-            <button type="button" className="agent-item" onClick={() => openRemote(remote)}><span className="agent-name-line"><strong>{remote.name}</strong><span className="agent-type-badge remote">A2A</span></span><span className="agent-meta">Remote · protocol {remote.protocol_version}</span></button>
+            <button type="button" className="agent-item" onClick={() => openRemote(remote)}><span className="agent-name-line"><strong>{remote.name}</strong><span className="agent-type-badge remote">A2A</span></span><span className="agent-meta">Remote · {remote.billing_mode === "caller" ? "You pay" : "Owner pays"} · protocol {remote.protocol_version}</span></button>
             <button type="button" className="btn btn-danger" onClick={() => void removeRemote(remote)}>Remove</button>
           </li>)}</ul> : <p className="field-hint">Connect an Agent Card to use an agent published by another account.</p>}
         </section>
@@ -294,11 +303,12 @@ export function AgentsPage() {
           ) : mode === "remote" && selectedRemote ? (
             <div className="remote-agent-workspace">
               <div className="panel-accent"><div className="panel-head"><div><h1>{selectedRemote.name}</h1><p>Remote A2A agent · {selectedRemote.protocol_version}</p></div><button type="button" className="icon-close" onClick={() => { setSelectedRemote(null); setMode("idle"); }}>×</button></div></div>
-              <div className="remote-agent-card-summary"><p>{selectedRemote.description}</p><div><span>Agent Card</span><code>{selectedRemote.agent_card_url}</code></div>{selectedRemote.skills.length ? <div className="remote-skill-list">{selectedRemote.skills.map((skill, index) => <span key={skill.id ?? index}>{skill.name ?? "Capability"}</span>)}</div> : null}</div>
+              <div className="remote-agent-card-summary"><p>{selectedRemote.description}</p><div><span>Agent Card</span><code>{selectedRemote.agent_card_url}</code></div><div className={`a2a-billing-badge ${selectedRemote.billing_mode}`}><strong>{selectedRemote.billing_mode === "caller" ? "Caller pays" : "Agent owner pays"}</strong><span>{selectedRemote.billing_mode === "caller" ? "Uses your selected provider profile without exposing its API key." : "The publishing account covers model usage."}</span></div>{selectedRemote.skills.length ? <div className="remote-skill-list">{selectedRemote.skills.map((skill, index) => <span key={skill.id ?? index}>{skill.name ?? "Capability"}</span>)}</div> : null}</div>
               <div className="remote-message-thread">
-                {!remoteMessages.length ? <div className="idle-panel"><p className="idle-title">Send a task through A2A</p><p>This message and any attached PDF are delivered to the remote account's agent.</p></div> : remoteMessages.map((message, index) => <div className={`remote-message ${message.role}`} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : selectedRemote.name}</strong>{message.attachmentName ? <span className="remote-pdf-chip">PDF · {message.attachmentName}</span> : null}{message.role === "agent" ? <><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div><span className="remote-message-cost">API cost: ${Number(message.apiCostUsd ?? 0).toFixed(6)}</span></> : message.content ? <p>{message.content}</p> : null}</div>)}
+                {!remoteMessages.length ? <div className="idle-panel"><p className="idle-title">Send a task through A2A</p><p>This message and any attached PDF are delivered to the remote account's agent.</p></div> : remoteMessages.map((message, index) => <div className={`remote-message ${message.role}`} key={`${message.role}-${index}`}><strong>{message.role === "user" ? "You" : selectedRemote.name}</strong>{message.attachmentName ? <span className="remote-pdf-chip">PDF · {message.attachmentName}</span> : null}{message.role === "agent" ? <><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div><span className="remote-message-cost">API cost: ${Number(message.apiCostUsd ?? 0).toFixed(6)} · {message.billedTo === "caller" ? "Billed to you" : "Billed to agent owner"}{message.provider ? ` · ${message.provider === "openai" ? "OpenAI" : "OpenRouter"}` : ""}</span></> : message.content ? <p>{message.content}</p> : null}</div>)}
                 {sendingRemote ? <div className="remote-message agent"><strong>{selectedRemote.name}</strong><p>Working through A2A...</p></div> : null}
               </div>
+              {error ? <p className="error remote-agent-error" role="alert">{error}</p> : null}
               <form className="remote-composer" onSubmit={sendRemote}>
                 <label className="remote-attach-button" title="Attach a PDF file" aria-label="Attach a PDF file">+
                   <input type="file" accept="application/pdf,.pdf" disabled={sendingRemote} onChange={(event) => { setRemotePdf(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
@@ -537,7 +547,7 @@ export function AgentsPage() {
           </div>
         </div>
       ) : null}
-      {showRemoteForm ? <div className="modal-backdrop" onClick={() => !savingRemote && setShowRemoteForm(false)}><form className="box modal remote-connect-modal" onSubmit={connectRemote} onClick={(event) => event.stopPropagation()}><h2>Connect remote A2A agent</h2><p>Paste the Agent Card URL and the API key supplied by the publishing account.</p><label>Agent Card URL<input type="url" required value={remoteCardUrl} onChange={(event) => setRemoteCardUrl(event.target.value)} placeholder="https://example.com/a2a/agents/.../.well-known/agent-card.json" /></label><label>A2A API key<input type="password" required value={remoteApiKey} onChange={(event) => setRemoteApiKey(event.target.value)} placeholder="a2a_..." /></label><span className="field-hint">The card is verified without calling the model. The API key is encrypted before storage.</span><div className="modal-actions"><button type="button" className="btn" disabled={savingRemote} onClick={() => setShowRemoteForm(false)}>Cancel</button><button className="btn btn-primary" disabled={savingRemote}>{savingRemote ? "Connecting..." : "Connect agent"}</button></div></form></div> : null}
+      {showRemoteForm ? <div className="modal-backdrop" onClick={() => !savingRemote && setShowRemoteForm(false)}><form className="box modal remote-connect-modal" onSubmit={connectRemote} onClick={(event) => event.stopPropagation()}><h2>Connect remote A2A agent</h2><p>Paste the Agent Card URL and the API key supplied by the publishing account.</p><label>Agent Card URL<input type="url" required value={remoteCardUrl} onChange={(event) => setRemoteCardUrl(event.target.value)} placeholder="https://example.com/a2a/agents/.../.well-known/agent-card.json" /></label><label>A2A API key<input type="password" required value={remoteApiKey} onChange={(event) => setRemoteApiKey(event.target.value)} placeholder="a2a_..." /></label><fieldset className="a2a-billing-picker"><legend>Who pays for model usage?</legend><label><input type="radio" name="billing" checked={remoteBillingMode === "owner"} onChange={() => setRemoteBillingMode("owner")} /><span><strong>Agent owner</strong><small>The publishing account's provider pays.</small></span></label><label><input type="radio" name="billing" checked={remoteBillingMode === "caller"} onChange={() => setRemoteBillingMode("caller")} /><span><strong>Use my provider profile</strong><small>Available for accounts on this Mini Agent deployment.</small></span></label></fieldset>{remoteBillingMode === "caller" ? <label>Provider profile<select required value={remoteProviderProfile} onChange={(event) => setRemoteProviderProfile(event.target.value)}><option value="">Select a saved API key</option>{providerProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider === "openai" ? "OpenAI" : "OpenRouter"}</option>)}</select></label> : null}<span className="field-hint">Provider keys stay encrypted and are never included in A2A requests or responses.</span><div className="modal-actions"><button type="button" className="btn" disabled={savingRemote} onClick={() => setShowRemoteForm(false)}>Cancel</button><button className="btn btn-primary" disabled={savingRemote || (remoteBillingMode === "caller" && !remoteProviderProfile)}>{savingRemote ? "Connecting..." : "Connect agent"}</button></div></form></div> : null}
     </div>
   );
 }

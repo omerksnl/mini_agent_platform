@@ -89,6 +89,7 @@ def send_a2a_message(
     payload: A2AJsonRpcRequest,
     authorization: str | None = Header(default=None),
     a2a_version: str | None = Header(default=None, alias="A2A-Version"),
+    billing_token: str | None = Header(default=None, alias="X-A2A-Billing-Token"),
     db: Session = Depends(get_db),
     llm_client: LLMClient = Depends(get_platform_llm_client),
 ) -> dict:
@@ -123,7 +124,10 @@ def send_a2a_message(
         ]
         if not text:
             text = "Process the attached PDF."
-        content, api_cost = service.invoke(agent, text, llm_client, attachments)
+        billing = service.billing_context(agent, billing_token, llm_client)
+        content, api_cost, billing_metadata = service.invoke(
+            agent, text, llm_client, attachments, billing
+        )
     except A2AError as exc:
         _raise_a2a_error(exc)
     context_id = payload.params.message.contextId or str(uuid4())
@@ -136,6 +140,6 @@ def send_a2a_message(
             "messageId": str(uuid4()),
             "contextId": context_id,
             "parts": [{"kind": "text", "text": content}],
-            "metadata": {"apiCostUsd": api_cost},
+            "metadata": {"apiCostUsd": api_cost, **billing_metadata},
         },
     }

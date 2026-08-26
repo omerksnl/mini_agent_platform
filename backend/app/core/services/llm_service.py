@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import hashlib
 import json
+import logging
 import re
 from typing import Any, Protocol
 
@@ -31,6 +32,9 @@ from app.core.services.remote_agent_service import RemoteAgentService
 from app.core.candidate_profile import normalize_candidate_profile_json
 from app.core.observability import build_langfuse_handler, langfuse_metadata
 from app.core.services.provider_service import ProviderCredentials, ProviderError, ProviderService
+
+
+logger = logging.getLogger(__name__)
 
 
 class LLMError(Exception):
@@ -207,10 +211,11 @@ class OpenRouterLLMClient:
             else self.settings.llm_max_tokens
         )
         max_tokens = max_output_tokens or default_max_tokens
-        credentials = self.credentials
-        if db is not None and self.user_id is not None:
+        credentials = getattr(self, "credentials", None)
+        user_id = getattr(self, "user_id", None)
+        if db is not None and user_id is not None:
             try:
-                credentials = ProviderService(db).resolve_for_agent(self.user_id, agent.id)
+                credentials = ProviderService(db).resolve_for_agent(user_id, agent.id)
             except ProviderError as exc:
                 raise LLMError(str(exc)) from exc
         model = self._chat_model(agent.model, agent.temperature, max_tokens, credentials)
@@ -244,7 +249,7 @@ class OpenRouterLLMClient:
         if agent.remote_agent_tools:
             def call_remote_tool(target, task: str) -> str:
                 nonlocal delegated_cost_usd
-                text, _, cost = RemoteAgentService(db).send(
+                text, _, cost, _, _, _ = RemoteAgentService(db).send(
                     target.id, target.tenant_id, target.owner_user_id, task.strip(),
                     [item.id for item in attachments or []],
                 )
@@ -295,7 +300,7 @@ class OpenRouterLLMClient:
 
             def delegate_to_remote(child, task: str) -> str:
                 nonlocal delegated_cost_usd
-                text, _, cost = RemoteAgentService(db).send(
+                text, _, cost, _, _, _ = RemoteAgentService(db).send(
                     child.id, child.tenant_id, child.owner_user_id, task.strip(),
                     [item.id for item in attachments],
                 )
@@ -543,7 +548,7 @@ class OpenRouterLLMClient:
             remote_target = fallback if fallback_type == "remote" else None
 
         if remote_target is not None:
-            content, _, remote_cost = RemoteAgentService(db).send(
+            content, _, remote_cost, _, _, _ = RemoteAgentService(db).send(
                 remote_target.id, remote_target.tenant_id, remote_target.owner_user_id,
                 latest_user, [item.id for item in attachments],
             )
@@ -627,6 +632,11 @@ class OpenRouterLLMClient:
                     config={"callbacks": callbacks, "metadata": metadata},
                 )
             except OpenAIError as exc:
+                logger.exception(
+                    "LLM provider request failed during direct execution: model=%s error_type=%s",
+                    getattr(model, "model_name", "unknown"),
+                    type(exc).__name__,
+                )
                 raise LLMError("The language model request failed") from exc
             return [response]
 
@@ -676,6 +686,11 @@ class OpenRouterLLMClient:
         except (ModelCallLimitExceededError, ToolCallLimitExceededError) as exc:
             raise LLMError("The agent reached its execution limit") from exc
         except OpenAIError as exc:
+            logger.exception(
+                "LLM provider request failed during agent execution: model=%s error_type=%s",
+                getattr(model, "model_name", "unknown"),
+                type(exc).__name__,
+            )
             raise LLMError("The language model request failed") from exc
         return result.get("messages", [])
 

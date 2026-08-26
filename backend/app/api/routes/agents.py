@@ -35,7 +35,9 @@ def publish_agent_a2a(
     current: CurrentUser = Depends(get_current_user),
 ) -> AgentA2APublishResponse:
     try:
-        agent, api_key = A2AService(db).publish(agent_id, current.tenant_id, payload.description)
+        agent, api_key = A2AService(db).publish(
+            agent_id, current.tenant_id, current.user.id, payload.description
+        )
     except AgentError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     base_url = str(request.base_url).rstrip("/")

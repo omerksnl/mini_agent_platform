@@ -3,6 +3,7 @@ import hmac
 import secrets
 import base64
 import binascii
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -10,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.core.observability import bind_trace_context
 from app.core.services.agent_service import AgentError, AgentService
-from app.core.services.llm_service import LLMClient, LLMError, LLMResult
+from app.core.services.llm_service import LLMClient, LLMError, LLMResult, OpenRouterLLMClient
 from app.core.services.attachment_service import AttachmentError, AttachmentService
+from app.core.services.provider_service import ProviderError, ProviderService
+from app.core.security import decode_a2a_billing_token, parse_uuid
 from app.models import Agent, Attachment, User
 
 
@@ -22,6 +25,14 @@ class A2AError(Exception):
         super().__init__(message)
 
 
+@dataclass(frozen=True)
+class A2ABillingContext:
+    client: LLMClient
+    mode: str
+    billed_to: str
+    provider: str | None
+
+
 class A2AService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -30,12 +41,15 @@ class A2AService:
     def hash_api_key(api_key: str) -> str:
         return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
-    def publish(self, agent_id: UUID, tenant_id: UUID, description: str) -> tuple[Agent, str]:
+    def publish(
+        self, agent_id: UUID, tenant_id: UUID, user_id: UUID, description: str
+    ) -> tuple[Agent, str]:
         agent = AgentService(self.db).get_agent(agent_id, tenant_id)
         api_key = f"a2a_{secrets.token_urlsafe(32)}"
         agent.a2a_enabled = True
         agent.a2a_description = description.strip()
         agent.a2a_api_key_hash = self.hash_api_key(api_key)
+        agent.a2a_published_by_user_id = user_id
         self.db.commit()
         self.db.refresh(agent)
         return agent, api_key
@@ -44,6 +58,7 @@ class A2AService:
         agent = AgentService(self.db).get_agent(agent_id, tenant_id)
         agent.a2a_enabled = False
         agent.a2a_api_key_hash = None
+        agent.a2a_published_by_user_id = None
         self.db.commit()
         self.db.refresh(agent)
         return agent
@@ -68,7 +83,7 @@ class A2AService:
             data = base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise A2AError("A2A PDF attachment is not valid base64") from exc
-        owner = self.db.scalar(select(User).where(User.tenant_id == agent.tenant_id).order_by(User.created_at))
+        owner = self._published_owner(agent)
         if owner is None:
             raise A2AError("Published agent has no tenant owner", 500)
         try:
@@ -76,13 +91,56 @@ class A2AService:
         except AttachmentError as exc:
             raise A2AError(exc.message, exc.status_code) from exc
 
+    def _published_owner(self, agent: Agent) -> User:
+        owner = self.db.get(User, agent.a2a_published_by_user_id) if agent.a2a_published_by_user_id else None
+        if owner is None:
+            owner = self.db.scalar(
+                select(User).where(User.tenant_id == agent.tenant_id).order_by(User.created_at)
+            )
+        if owner is None:
+            raise A2AError("Published agent has no tenant owner", 500)
+        return owner
+
+    def billing_context(
+        self,
+        agent: Agent,
+        billing_token: str | None,
+        fallback_client: LLMClient,
+    ) -> A2ABillingContext:
+        if not billing_token and not isinstance(fallback_client, OpenRouterLLMClient):
+            return A2ABillingContext(fallback_client, "owner", "agent_owner", None)
+        service = ProviderService(self.db)
+        try:
+            if billing_token:
+                payload = decode_a2a_billing_token(billing_token, agent_id=str(agent.id))
+                user_id = parse_uuid(payload["sub"])
+                credential_id = parse_uuid(payload["credential_id"])
+                credentials = service.resolve_profile(user_id, credential_id)
+                return A2ABillingContext(
+                    OpenRouterLLMClient(credentials), "caller", "caller", credentials.provider
+                )
+            owner = self._published_owner(agent)
+            credentials = service.resolve_for_agent(owner.id, agent.id)
+            return A2ABillingContext(
+                OpenRouterLLMClient(credentials), "owner", "agent_owner", credentials.provider
+            )
+        except (ProviderError, LLMError) as exc:
+            # Existing published agents keep working with the platform client if
+            # their owner has no saved provider profile.
+            if not billing_token:
+                return A2ABillingContext(fallback_client, "owner", "agent_owner", None)
+            raise A2AError(str(exc), 400) from exc
+        except (ValueError, TypeError) as exc:
+            raise A2AError("Invalid or expired A2A billing token", 401) from exc
+
     def invoke(
         self,
         agent: Agent,
         text: str,
         llm_client: LLMClient,
         attachments: list[Attachment] | None = None,
-    ) -> tuple[str, float]:
+        billing: A2ABillingContext | None = None,
+    ) -> tuple[str, float, dict[str, str | None]]:
         messages = [{"role": "user", "content": text}]
         try:
             with bind_trace_context(
@@ -96,7 +154,8 @@ class A2AService:
                     or "text_to_pdf" in agent.system_tools
                     or attachments
                 )
-                result = llm_client.complete(
+                active_client = billing.client if billing else llm_client
+                result = active_client.complete(
                     agent,
                     messages,
                     agent.http_tools,
@@ -106,5 +165,13 @@ class A2AService:
         except LLMError as exc:
             raise A2AError(str(exc), 502) from exc
         if isinstance(result, LLMResult):
-            return result.content, result.api_cost_usd
-        return str(result), 0.0
+            return result.content, result.api_cost_usd, {
+                "billingMode": billing.mode if billing else "owner",
+                "billedTo": billing.billed_to if billing else "agent_owner",
+                "provider": billing.provider if billing else None,
+            }
+        return str(result), 0.0, {
+            "billingMode": billing.mode if billing else "owner",
+            "billedTo": billing.billed_to if billing else "agent_owner",
+            "provider": billing.provider if billing else None,
+        }

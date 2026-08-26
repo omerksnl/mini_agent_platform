@@ -34,6 +34,17 @@ class FakeWorkflowLLM:
         )
 
 
+class ParallelWorkflowLLM(FakeWorkflowLLM):
+    intervals: dict[str, tuple[float, float]] = {}
+
+    def complete(self, agent, messages, *args, **kwargs):
+        if agent.name.startswith("branch_"):
+            started = time.perf_counter()
+            time.sleep(0.35)
+            self.intervals[agent.name] = (started, time.perf_counter())
+        return super().complete(agent, messages, *args, **kwargs)
+
+
 def register(client: TestClient, email: str, tenant: str) -> str:
     response = client.post("/api/auth/register", json={
         "email": email,
@@ -79,6 +90,124 @@ def create_execution_workflow(client: TestClient, token: str, agent_id: str) -> 
     })
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_parallel_branches_run_together_and_join_once(client: TestClient) -> None:
+    ParallelWorkflowLLM.intervals.clear()
+    app.dependency_overrides[get_llm_client] = lambda: ParallelWorkflowLLM()
+    token = register(client, "parallel@example.com", "Parallel Tenant")
+    start_agent = create_agent(client, token, "start_agent")
+    branch_a = create_agent(client, token, "branch_a")
+    branch_b = create_agent(client, token, "branch_b")
+    join_agent = create_agent(client, token, "join_agent")
+    response = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Parallel fan out",
+        "steps": [
+            {"step_key": "start", "name": "Start", "step_type": "agent", "position": 0, "agent_id": start_agent["id"]},
+            {"step_key": "branch_a", "name": "Branch A", "step_type": "agent", "position": 1, "agent_id": branch_a["id"]},
+            {"step_key": "branch_b", "name": "Branch B", "step_type": "agent", "position": 2, "agent_id": branch_b["id"]},
+            {"step_key": "join", "name": "Join", "step_type": "agent", "position": 3, "agent_id": join_agent["id"], "config": {"join_mode": "all"}},
+        ],
+        "routes": [
+            {"source_step_key": "start", "target_step_key": "branch_a", "condition": "success"},
+            {"source_step_key": "start", "target_step_key": "branch_b", "condition": "success"},
+            {"source_step_key": "branch_a", "target_step_key": "join", "condition": "success"},
+            {"source_step_key": "branch_b", "target_step_key": "join", "condition": "success"},
+        ],
+    })
+    assert response.status_code == 201, response.text
+
+    started = client.post(
+        f"/api/workflows/{response.json()['id']}/runs",
+        headers=headers(token), json={"input_data": {"request": "Run branches"}},
+    )
+    completed = wait_for_run(client, token, started.json()["id"], {"completed", "failed"})
+    assert completed["status"] == "completed", completed.get("error")
+    branch_a_interval = ParallelWorkflowLLM.intervals["branch_a"]
+    branch_b_interval = ParallelWorkflowLLM.intervals["branch_b"]
+    assert max(branch_a_interval[0], branch_b_interval[0]) < min(branch_a_interval[1], branch_b_interval[1])
+    assert [item["step_key"] for item in completed["step_runs"]].count("join") == 1
+    assert {item["artifact_key"] for item in completed["artifacts"]} >= {"branch_a", "branch_b", "join"}
+
+
+def test_nested_workflow_exposes_only_its_final_output(client: TestClient) -> None:
+    app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
+    token = register(client, "nested@example.com", "Nested Tenant")
+    child_agent = create_agent(client, token, "child_agent")
+    child = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Child workflow",
+        "steps": [{
+            "step_key": "child_task", "name": "Child task", "step_type": "agent",
+            "position": 0, "agent_id": child_agent["id"],
+        }],
+        "routes": [],
+    })
+    assert child.status_code == 201, child.text
+    parent = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Parent workflow",
+        "steps": [{
+            "step_key": "nested", "name": "Nested", "step_type": "workflow",
+            "position": 0, "target_workflow_id": child.json()["id"],
+        }],
+        "routes": [],
+    })
+    assert parent.status_code == 201, parent.text
+
+    started = client.post(
+        f"/api/workflows/{parent.json()['id']}/runs",
+        headers=headers(token), json={"input_data": {"request": "Run child"}},
+    )
+    completed = wait_for_run(client, token, started.json()["id"], {"completed", "failed"})
+
+    assert completed["status"] == "completed", completed.get("error")
+    assert completed["artifacts"][-1]["artifact_key"] == "nested"
+    nested_output = completed["artifacts"][-1]["data"]
+    assert nested_output["content"]["content"] == "processed by child_agent"
+    assert "artifacts" not in nested_output
+    assert completed["total_api_cost_usd"] == 0.0125
+
+
+def test_nested_human_wait_pauses_and_resumes_parent(client: TestClient) -> None:
+    app.dependency_overrides[get_llm_client] = lambda: FakeWorkflowLLM()
+    token = register(client, "nested-wait@example.com", "Nested Wait Tenant")
+    child_agent = create_agent(client, token, "child_after_wait")
+    parent_agent = create_agent(client, token, "parent_after_child")
+    child = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Child with approval",
+        "steps": [
+            {"step_key": "approval", "name": "Approval", "step_type": "human_wait", "position": 0, "config": {"required_input": "Choose a role"}},
+            {"step_key": "child_task", "name": "Child task", "step_type": "agent", "position": 1, "agent_id": child_agent["id"]},
+        ],
+        "routes": [{"source_step_key": "approval", "target_step_key": "child_task", "condition": "input_available"}],
+    })
+    assert child.status_code == 201, child.text
+    parent = client.post("/api/workflows", headers=headers(token), json={
+        "name": "Parent with nested wait",
+        "steps": [
+            {"step_key": "nested", "name": "Nested", "step_type": "workflow", "position": 0, "target_workflow_id": child.json()["id"]},
+            {"step_key": "parent_task", "name": "Parent task", "step_type": "agent", "position": 1, "agent_id": parent_agent["id"]},
+        ],
+        "routes": [{"source_step_key": "nested", "target_step_key": "parent_task", "condition": "success"}],
+    })
+    assert parent.status_code == 201, parent.text
+
+    started = client.post(
+        f"/api/workflows/{parent.json()['id']}/runs",
+        headers=headers(token), json={"input_data": {"request": "Run nested wait"}},
+    )
+    waiting = wait_for_run(client, token, started.json()["id"], {"waiting", "failed"})
+    assert waiting["status"] == "waiting", waiting.get("error")
+    assert waiting["step_runs"][0]["output_data"]["required_input"] == "Choose a role"
+
+    resumed = client.post(
+        f"/api/workflows/runs/{waiting['id']}/resume",
+        headers=headers(token), json={"input_data": {"response": "ML Engineer"}},
+    )
+    assert resumed.status_code == 200, resumed.text
+    completed = wait_for_run(client, token, waiting["id"], {"completed", "failed"})
+    assert completed["status"] == "completed", completed.get("error")
+    assert [item["step_key"] for item in completed["step_runs"]] == ["nested", "parent_task"]
+    assert completed["artifacts"][-1]["artifact_key"] == "parent_task"
 
 
 def test_workflow_runs_until_human_wait_and_resumes(client: TestClient) -> None:

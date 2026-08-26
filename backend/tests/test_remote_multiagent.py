@@ -85,7 +85,7 @@ def test_remote_workflow_node_executes_and_propagates_cost(client: TestClient, m
     monkeypatch.setattr(
         RemoteAgentService, "send",
         lambda self, remote_id, tenant_id, user_id, content, attachment_ids: (
-            "Remote profile result", "context-1", 0.03125,
+            "Remote profile result", "context-1", 0.03125, "owner", "agent_owner", None,
         ),
     )
     workflow = client.post("/api/workflows", headers=owner, json={

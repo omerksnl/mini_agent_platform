@@ -45,6 +45,7 @@ class ReportPdfService:
         if not content.strip():
             raise ReportPdfError("PDF content cannot be empty")
 
+        content = self._normalize_markdown(content)
         regular, bold = self._register_fonts()
         styles = self._styles(regular, bold)
         document_title = title
@@ -306,12 +307,15 @@ class ReportPdfService:
 
     @staticmethod
     def _section_palette(title: str) -> tuple[colors.Color, colors.Color] | None:
-        normalized = re.sub(r"[^a-z]+", " ", title.casefold()).strip()
-        if normalized in {"overall score", "score", "assessment score"}:
+        normalized = re.sub(r"[\W_]+", " ", title.casefold(), flags=re.UNICODE).strip()
+        if normalized in {"overall score", "score", "assessment score", "genel puan"}:
             return colors.HexColor("#2F5D9B"), colors.HexColor("#EAF1FB")
-        if normalized in {"strengths", "pros", "key strengths"}:
+        if normalized in {"strengths", "pros", "key strengths", "güçlü yönler", "guclu yonler"}:
             return colors.HexColor("#2E7D4F"), colors.HexColor("#EAF6EF")
-        if normalized in {"weaknesses", "weakness", "risks", "cons", "limitations", "risk factors"}:
+        if normalized in {
+            "weaknesses", "weakness", "risks", "cons", "limitations", "risk factors",
+            "geliştirilmesi gereken yönler", "gelistirilmesi gereken yonler", "zayıf yönler", "zayif yonler",
+        }:
             return colors.HexColor("#B23A3A"), colors.HexColor("#FBEDED")
         if normalized in {
             "inconsistencies",
@@ -320,11 +324,46 @@ class ReportPdfService:
             "development areas",
             "development area",
             "growth areas",
+            "tutarsızlıklar",
+            "tutarsizliklar",
         }:
             return colors.HexColor("#B36B00"), colors.HexColor("#FFF4DD")
-        if normalized in {"overall opinion", "overall assessment"}:
+        if normalized in {"overall opinion", "overall assessment", "genel yorum", "genel değerlendirme", "genel degerlendirme"}:
             return colors.HexColor("#5B4B8A"), colors.HexColor("#F1EEFA")
         return None
+
+    @staticmethod
+    def _normalize_markdown(content: str) -> str:
+        """Normalize common model Markdown variants before deterministic rendering."""
+        content = content.replace("&#x20;", " ").replace("&nbsp;", " ")
+        content = re.sub(r"\\\s*$", "", content, flags=re.MULTILINE)
+        main_titles = r"(?:Nihai Aday Değerlendirmesi|Final Candidate Assessment(?: Report)?)"
+        section_titles = (
+            r"(?:Genel Puan|Güçlü Yönler|Geliştirilmesi Gereken Yönler|Zayıf Yönler|"
+            r"Tutarsızlıklar|Genel Yorum|Overall Score|Strengths|Weaknesses|Risks|"
+            r"Development Areas|Inconsistencies|Overall Opinion|Overall Assessment)"
+        )
+        content = re.sub(
+            rf"^\s*#{{1,6}}\s+({main_titles})\s*$",
+            r"# \1",
+            content,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        content = re.sub(
+            rf"^\s*#{{1,6}}\s+({section_titles})\s*$",
+            r"## \1",
+            content,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        # Some model outputs repeat the document title once as Markdown and once
+        # as plain text. Keep only the first adjacent occurrence.
+        content = re.sub(
+            rf"(^#\s+({main_titles})\s*$)(?:\s*^\2\s*$)+",
+            r"\1",
+            content,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        return content.strip()
 
     def _table(
         self, lines: list[str], styles: dict[str, ParagraphStyle], available_width: float

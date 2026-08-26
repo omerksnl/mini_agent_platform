@@ -40,7 +40,12 @@ def create_remote_agent(
 ) -> RemoteAgentResponse:
     try:
         item = RemoteAgentService(db).create(
-            current.tenant_id, current.user.id, str(payload.agent_card_url), payload.api_key
+            current.tenant_id,
+            current.user.id,
+            str(payload.agent_card_url),
+            payload.api_key,
+            payload.billing_mode,
+            payload.provider_credential_id,
         )
     except RemoteAgentError as exc:
         _raise(exc)
@@ -67,7 +72,7 @@ def send_remote_agent_message(
     current: CurrentUser = Depends(get_current_user),
 ) -> RemoteAgentMessageResponse:
     try:
-        content, context_id, api_cost_usd = RemoteAgentService(db).send(
+        content, context_id, api_cost_usd, billing_mode, billed_to, provider = RemoteAgentService(db).send(
             remote_id,
             current.tenant_id,
             current.user.id,
@@ -76,4 +81,11 @@ def send_remote_agent_message(
         )
     except RemoteAgentError as exc:
         _raise(exc)
-    return RemoteAgentMessageResponse(content=content, context_id=context_id, api_cost_usd=api_cost_usd)
+    return RemoteAgentMessageResponse(
+        content=content,
+        context_id=context_id,
+        api_cost_usd=api_cost_usd,
+        billing_mode=billing_mode,
+        billed_to=billed_to,
+        provider=provider,
+    )

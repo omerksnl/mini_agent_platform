@@ -87,6 +87,35 @@ def test_assessment_sections_have_dedicated_palettes() -> None:
     assert service._section_palette("Weaknesses") is not None
     assert service._section_palette("Inconsistencies") is not None
     assert service._section_palette("Overall Opinion") is not None
+    assert service._section_palette("Genel Puan") is not None
+    assert service._section_palette("Güçlü Yönler") is not None
+    assert service._section_palette("Geliştirilmesi Gereken Yönler") is not None
+    assert service._section_palette("Tutarsızlıklar") is not None
+    assert service._section_palette("Genel Yorum") is not None
+
+
+def test_candidate_assessment_markdown_is_normalized() -> None:
+    content = """### Nihai Aday Değerlendirmesi
+Nihai Aday Değerlendirmesi
+
+#### Genel Puan
+
+> **63.2 / 100**\\
+&#x20;Açıklama
+
+#### Güçlü Yönler
+
+- Kanıt
+"""
+
+    normalized = ReportPdfService._normalize_markdown(content)
+
+    assert normalized.count("Nihai Aday Değerlendirmesi") == 1
+    assert normalized.startswith("# Nihai Aday Değerlendirmesi")
+    assert "## Genel Puan" in normalized
+    assert "## Güçlü Yönler" in normalized
+    assert "&#x20;" not in normalized
+    assert "100**\\" not in normalized
 
 
 def test_text_to_pdf_creates_tenant_scoped_generated_file(
@@ -115,6 +144,36 @@ def test_text_to_pdf_creates_tenant_scoped_generated_file(
         generated = service.get(UUID(generated_id), tenant.id)
         assert generated.original_name == "candidate report.pdf"
         assert service.path_for(generated).is_file()
+
+
+def test_candidate_assessment_forces_two_column_and_rejects_placeholders(
+    db_session_factory: sessionmaker[Session], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with db_session_factory() as db:
+        tenant = Tenant(name="Acme")
+        agent = Agent(tenant=tenant, name="Reporter", system_tools=["text_to_pdf"])
+        db.add_all([tenant, agent])
+        db.commit()
+        service = GeneratedFileService(db)
+        monkeypatch.setattr(service.settings, "upload_directory", str(tmp_path))
+        tool = build_text_to_pdf_tool(db, agent)
+
+        result = tool.invoke({
+            "content": "# Final Candidate Assessment\n\n## Strengths\n\n- Verified evidence",
+            "template_id": "blank_markdown",
+            "filename": "assessment.pdf",
+            "title": "Final Candidate Assessment",
+        })
+        placeholder_result = tool.invoke({
+            "content": "# Nihai Aday Değerlendirmesi\n\nAday: [ADAY ADI]",
+            "template_id": "two_column",
+            "filename": "invalid.pdf",
+            "title": "Final Candidate Assessment",
+        })
+        db.commit()
+
+        assert '"template_id": "two_column"' in result
+        assert "candidate-name placeholder" in placeholder_result
 
 
 def test_generated_file_cannot_cross_tenants(

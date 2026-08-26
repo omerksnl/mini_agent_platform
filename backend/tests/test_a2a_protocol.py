@@ -1,9 +1,12 @@
 from fastapi.testclient import TestClient
 import base64
+from sqlalchemy import select
 
 from app.api.deps import get_llm_client, get_platform_llm_client
-from app.core.services.llm_service import LLMResult
+from app.core.security import create_a2a_billing_token
+from app.core.services.llm_service import LLMResult, OpenRouterLLMClient
 from app.main import app
+from app.models import ProviderCredential, User
 
 
 def register(client: TestClient, email: str, tenant_name: str) -> dict[str, str]:
@@ -161,3 +164,64 @@ def test_published_pdf_agent_receives_a2a_file_as_attachment(client: TestClient)
         app.dependency_overrides.pop(get_platform_llm_client, None)
     assert response.status_code == 200, response.text
     assert response.json()["result"]["parts"][0]["text"] == "CandidateProfile created"
+
+
+def test_published_agent_can_bill_the_callers_saved_provider_profile(
+    client: TestClient, db_session_factory, monkeypatch
+) -> None:
+    owner = register(client, "a2a-byok-owner@example.com", "A2A BYOK Owner")
+    caller = register(client, "a2a-byok-caller@example.com", "A2A BYOK Caller")
+    agent = create_agent(client, owner)
+    published = client.post(
+        f"/api/agents/{agent['id']}/a2a/publish",
+        headers=owner,
+        json={"description": "Uses the caller's provider profile."},
+    ).json()
+    saved = client.put("/api/provider-settings", headers=caller, json={
+        "name": "Caller OpenAI",
+        "provider": "openai",
+        "api_key": "sk-caller-a2a-key-that-never-leaves-the-server-123456",
+    })
+    assert saved.status_code == 200, saved.text
+
+    db = db_session_factory()
+    try:
+        caller_user = db.scalar(select(User).where(User.email == "a2a-byok-caller@example.com"))
+        profile = db.scalar(select(ProviderCredential).where(ProviderCredential.user_id == caller_user.id))
+        caller_id = str(caller_user.id)
+        profile_id = str(profile.id)
+    finally:
+        db.close()
+
+    def fake_complete(self, agent, messages, http_tools=None, **kwargs):
+        assert self.credentials.provider == "openai"
+        assert self.credentials.api_key == "sk-caller-a2a-key-that-never-leaves-the-server-123456"
+        return LLMResult(content="Caller-paid result", used_tools=[], api_cost_usd=0.0042)
+
+    monkeypatch.setattr(OpenRouterLLMClient, "complete", fake_complete)
+    billing_token = create_a2a_billing_token(
+        user_id=caller_id,
+        credential_id=profile_id,
+        agent_id=agent["id"],
+    )
+    payload = {
+        "jsonrpc": "2.0", "id": "byok-request", "method": "SendMessage",
+        "params": {"message": {"role": "user", "parts": [{"text": "Use my provider"}]}},
+    }
+    response = client.post(
+        published["endpoint_url"],
+        headers={
+            "Authorization": f"Bearer {published['api_key']}",
+            "X-A2A-Billing-Token": billing_token,
+        },
+        json=payload,
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["parts"][0]["text"] == "Caller-paid result"
+    assert result["metadata"] == {
+        "apiCostUsd": 0.0042,
+        "billingMode": "caller",
+        "billedTo": "caller",
+        "provider": "openai",
+    }

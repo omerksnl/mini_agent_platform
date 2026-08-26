@@ -75,6 +75,17 @@ class ProviderService:
         user = self.db.get(User, user_id)
         return self.resolve(user)
 
+    def resolve_profile(self, user_id, profile_id) -> ProviderCredentials:
+        if self.db is None:
+            raise ProviderError("Provider database context is unavailable")
+        profile = self.db.scalar(select(ProviderCredential).where(
+            ProviderCredential.id == profile_id,
+            ProviderCredential.user_id == user_id,
+        ))
+        if not profile:
+            raise ProviderError("Saved API key not found")
+        return self._decrypt(profile.provider, profile.encrypted_api_key)
+
     def list_agent_assignments(self, user: User) -> list[AgentProviderAssignment]:
         if self.db is None:
             return []

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -7,6 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 class RemoteAgentCreate(BaseModel):
     agent_card_url: HttpUrl
     api_key: str = Field(min_length=8, max_length=500)
+    billing_mode: Literal["owner", "caller"] = "owner"
+    provider_credential_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_caller_profile(self) -> "RemoteAgentCreate":
+        if self.billing_mode == "caller" and self.provider_credential_id is None:
+            raise ValueError("A provider profile is required when the caller pays")
+        return self
 
 
 class RemoteAgentResponse(BaseModel):
@@ -20,6 +29,8 @@ class RemoteAgentResponse(BaseModel):
     agent_card_url: str
     endpoint_url: str
     protocol_version: str
+    billing_mode: Literal["owner", "caller"]
+    provider_credential_id: UUID | None
     skills: list[dict]
     created_at: datetime
     updated_at: datetime
@@ -40,3 +51,6 @@ class RemoteAgentMessageResponse(BaseModel):
     content: str
     context_id: str | None = None
     api_cost_usd: float = 0.0
+    billing_mode: Literal["owner", "caller"] = "owner"
+    billed_to: Literal["agent_owner", "caller"] = "agent_owner"
+    provider: Literal["openrouter", "openai"] | None = None

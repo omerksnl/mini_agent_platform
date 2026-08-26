@@ -24,12 +24,12 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     redis_cache_ttl_seconds: int = 300
     llm_max_tokens: int = 2000
-    cv_extraction_max_tokens: int = 4000
-    rag_max_tokens: int = 5000
+    cv_extraction_max_tokens: int = 3000
+    rag_max_tokens: int = 3000
     rag_tool_call_limit: int = 8
     rag_model_call_limit: int = 9
     rag_recursion_limit: int = 25
-    supervisor_max_tokens: int = 5000
+    supervisor_max_tokens: int = 3000
     supervisor_tool_call_limit: int = 6
     supervisor_model_call_limit: int = 8
     supervisor_recursion_limit: int = 25

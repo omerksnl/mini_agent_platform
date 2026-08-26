@@ -1,6 +1,8 @@
 import json
+import re
 from typing import Literal
 
+from langchain_core.tools import ToolException
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -29,8 +31,20 @@ def build_text_to_pdf_tool(db: Session, agent: Agent) -> StructuredTool:
             raise ValueError(
                 f"PDF content exceeds the {settings.text_to_pdf_max_characters}-character limit"
             )
+        if re.search(r"\[(?:aday\s*ad[ıi]|candidate\s*name)\]", content, re.IGNORECASE):
+            raise ToolException(
+                "The report still contains a candidate-name placeholder. Replace it with the "
+                "verified full name before creating the PDF."
+            )
         if template_id not in REPORT_TEMPLATES:
             raise ValueError("Unknown report template")
+        normalized = content.casefold()
+        is_candidate_assessment = (
+            "nihai aday değerlendirmesi" in normalized
+            or "final candidate assessment" in normalized
+        )
+        if is_candidate_assessment:
+            template_id = "two_column"
         data = ReportPdfService().render(content, template_id, title)
         generated = GeneratedFileService(db).create_pdf(
             agent.tenant_id,
@@ -55,4 +69,5 @@ def build_text_to_pdf_tool(db: Session, agent: Agent) -> StructuredTool:
             "download URL in the final answer. Available templates:\n" + template_catalog_for_model()
         ),
         args_schema=TextToPdfInput,
+        handle_tool_error=True,
     )

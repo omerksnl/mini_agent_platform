@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.tools.http_tools import HttpToolExecutor
 from app.core.services.attachment_service import AttachmentError, AttachmentService
-from app.models import Attachment, RemoteAgent
+from app.core.security import create_a2a_billing_token
+from app.models import A2ACallUsage, Attachment, ProviderCredential, RemoteAgent
 
 
 class RemoteAgentError(Exception):
@@ -90,7 +91,26 @@ class RemoteAgentService:
             raise RemoteAgentError("Agent does not expose a JSONRPC interface")
         return interface["url"], str(interface.get("protocolVersion", "1.0"))
 
-    def create(self, tenant_id: UUID, user_id: UUID, card_url: str, api_key: str) -> RemoteAgent:
+    def create(
+        self,
+        tenant_id: UUID,
+        user_id: UUID,
+        card_url: str,
+        api_key: str,
+        billing_mode: str = "owner",
+        provider_credential_id: UUID | None = None,
+    ) -> RemoteAgent:
+        if billing_mode not in {"owner", "caller"}:
+            raise RemoteAgentError("Invalid A2A billing mode")
+        if billing_mode == "caller":
+            profile = self.db.scalar(select(ProviderCredential).where(
+                ProviderCredential.id == provider_credential_id,
+                ProviderCredential.user_id == user_id,
+            ))
+            if profile is None:
+                raise RemoteAgentError("Saved API key not found")
+        else:
+            provider_credential_id = None
         card = self._fetch_card(card_url)
         endpoint, protocol_version = self._interface(card)
         item = RemoteAgent(
@@ -101,6 +121,8 @@ class RemoteAgentService:
             agent_card_url=card_url,
             endpoint_url=endpoint,
             encrypted_api_key=self.cipher.encrypt(api_key.encode("utf-8")).decode("ascii"),
+            billing_mode=billing_mode,
+            provider_credential_id=provider_credential_id,
             protocol_version=protocol_version[:20],
             skills=card.get("skills") if isinstance(card.get("skills"), list) else [],
         )
@@ -138,7 +160,7 @@ class RemoteAgentService:
         user_id: UUID,
         content: str,
         attachment_ids: list[UUID],
-    ) -> tuple[str, str | None, float]:
+    ) -> tuple[str, str | None, float, str, str, str | None]:
         item = self.get(remote_id, tenant_id, user_id)
         try:
             api_key = self.cipher.decrypt(item.encrypted_api_key.encode("ascii")).decode("utf-8")
@@ -166,10 +188,23 @@ class RemoteAgentService:
                 "parts": parts,
             }},
         }
+        headers = {"Authorization": f"Bearer {api_key}", "A2A-Version": item.protocol_version}
+        if item.billing_mode == "caller":
+            if item.provider_credential_id is None:
+                raise RemoteAgentError("Select a provider profile for caller-paid A2A requests")
+            try:
+                target_agent_id = UUID(urlparse(item.endpoint_url).path.rstrip("/").split("/")[-1])
+            except (ValueError, IndexError) as exc:
+                raise RemoteAgentError("Remote endpoint cannot accept caller billing") from exc
+            headers["X-A2A-Billing-Token"] = create_a2a_billing_token(
+                user_id=str(user_id),
+                credential_id=str(item.provider_credential_id),
+                agent_id=str(target_agent_id),
+            )
         try:
             response = httpx.post(
                 self._request_url(item.endpoint_url),
-                headers={"Authorization": f"Bearer {api_key}", "A2A-Version": item.protocol_version},
+                headers=headers,
                 json=payload,
                 timeout=300.0,
                 follow_redirects=False,
@@ -192,4 +227,28 @@ class RemoteAgentService:
             api_cost = max(0.0, float(raw_cost))
         except (TypeError, ValueError):
             api_cost = 0.0
-        return text, result.get("contextId") if isinstance(result.get("contextId"), str) else None, api_cost
+        billing_mode = str(metadata.get("billingMode") or "owner")
+        billed_to = str(metadata.get("billedTo") or "agent_owner")
+        provider = metadata.get("provider") if metadata.get("provider") in {"openrouter", "openai"} else None
+        if item.billing_mode == "caller" and (billing_mode != "caller" or billed_to != "caller"):
+            raise RemoteAgentError(
+                "The remote platform does not support secure caller-paid A2A billing", 400
+            )
+        self.db.add(A2ACallUsage(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            remote_agent_id=item.id,
+            billing_mode=billing_mode,
+            billed_to=billed_to,
+            provider=provider,
+            api_cost_usd=api_cost,
+        ))
+        self.db.commit()
+        return (
+            text,
+            result.get("contextId") if isinstance(result.get("contextId"), str) else None,
+            api_cost,
+            billing_mode,
+            billed_to,
+            provider,
+        )

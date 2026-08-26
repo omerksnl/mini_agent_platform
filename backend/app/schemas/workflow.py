@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-StepType = Literal["agent", "remote_agent", "http_tool", "system_tool", "human_wait", "report"]
+StepType = Literal["agent", "remote_agent", "workflow", "http_tool", "system_tool", "human_wait", "report"]
 RouteCondition = Literal["success", "failure", "input_available", "always"]
 
 
@@ -16,6 +16,7 @@ class WorkflowStepInput(BaseModel):
     position: int = Field(ge=0)
     agent_id: UUID | None = None
     remote_agent_id: UUID | None = None
+    target_workflow_id: UUID | None = None
     http_tool_id: UUID | None = None
     system_tool_name: str | None = Field(default=None, min_length=1, max_length=100)
     config: dict = Field(default_factory=dict)
@@ -24,11 +25,15 @@ class WorkflowStepInput(BaseModel):
     def validate_target(self) -> Self:
         target_count = sum(
             value is not None
-            for value in (self.agent_id, self.remote_agent_id, self.http_tool_id, self.system_tool_name)
+            for value in (
+                self.agent_id, self.remote_agent_id, self.target_workflow_id,
+                self.http_tool_id, self.system_tool_name,
+            )
         )
         expected = {
             "agent": self.agent_id is not None and target_count == 1,
             "remote_agent": self.remote_agent_id is not None and target_count == 1,
+            "workflow": self.target_workflow_id is not None and target_count == 1,
             "http_tool": self.http_tool_id is not None and target_count == 1,
             "system_tool": self.system_tool_name is not None and target_count == 1,
             "human_wait": target_count == 0,
@@ -36,6 +41,9 @@ class WorkflowStepInput(BaseModel):
         }[self.step_type]
         if not expected:
             raise ValueError(f"Invalid target fields for {self.step_type} step")
+        join_mode = self.config.get("join_mode")
+        if join_mode is not None and join_mode not in {"all", "any"}:
+            raise ValueError("Workflow join_mode must be all or any")
         if self.step_type == "report":
             input_key = self.config.get("input_artifact_key")
             template_id = self.config.get("template_id")
@@ -121,6 +129,7 @@ class WorkflowStepResponse(BaseModel):
     position: int
     agent_id: UUID | None
     remote_agent_id: UUID | None
+    target_workflow_id: UUID | None
     http_tool_id: UUID | None
     system_tool_name: str | None
     config: dict

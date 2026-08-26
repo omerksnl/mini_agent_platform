@@ -1,6 +1,7 @@
 import json
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -50,6 +51,7 @@ class WorkflowExecutionService:
         run = WorkflowRun(
             tenant_id=tenant_id,
             workflow_id=workflow.id,
+            started_by_user_id=user_id,
             status="running",
             input_data=input_data,
             output_data={"context": input_data, "steps": {}},
@@ -96,6 +98,7 @@ class WorkflowExecutionService:
         run = WorkflowRun(
             tenant_id=tenant_id,
             workflow_id=workflow.id,
+            started_by_user_id=user_id,
             status="running",
             current_step_id=start_step.id,
             input_data=input_data,
@@ -131,6 +134,18 @@ class WorkflowExecutionService:
         run = self.get_run(run_id, tenant_id)
         if run.status != "running" or run.current_step is None:
             return run
+        resume_input = run.output_data.get("_nested_resume_input")
+        nested_step_run = next(
+            (
+                item for item in reversed(run.step_runs)
+                if item.workflow_step_id == run.current_step_id
+                and item.step_type == "workflow"
+                and item.output_data.get("_nested_waiting")
+            ),
+            None,
+        )
+        if nested_step_run is not None and isinstance(resume_input, dict):
+            return self._resume_nested_run(run, nested_step_run, resume_input)
         return self._execute(run, run.workflow, run.current_step)
 
     def resume(self, run_id: UUID, tenant_id: UUID, input_data: dict) -> WorkflowRun:
@@ -157,11 +172,11 @@ class WorkflowExecutionService:
         state.setdefault("steps", {})[waiting.step_key] = waiting.output_data
         run.output_data = state
         run.status = "running"
-        next_step = self._next_step(run.workflow, run.current_step, "input_available")
+        pending = self._enqueue_after_event(run, run.current_step, "input_available")
         self.db.commit()
-        if next_step is None:
+        if not pending:
             return self._complete(run)
-        return self._execute(run, run.workflow, next_step)
+        return self._execute(run, run.workflow, self._step_by_key(run.workflow, pending[0]))
 
     def resume_deferred(self, run_id: UUID, tenant_id: UUID, input_data: dict) -> WorkflowRun:
         run = self.get_run(run_id, tenant_id)
@@ -170,6 +185,14 @@ class WorkflowExecutionService:
         waiting = next((item for item in reversed(run.step_runs) if item.status == "waiting"), None)
         if waiting is None or waiting.workflow_step_id != run.current_step_id:
             raise WorkflowError("Waiting workflow step was not found", 409)
+        if waiting.step_type == "workflow" and waiting.output_data.get("_nested_waiting"):
+            state = dict(run.output_data)
+            state["_nested_resume_input"] = input_data
+            run.output_data = state
+            waiting.status = "running"
+            run.status = "running"
+            self.db.commit()
+            return self.get_run(run.id, tenant_id)
         waiting.status = "completed"
         waiting.output_data = {"human_input": input_data}
         waiting.completed_at = datetime.now(timezone.utc)
@@ -178,11 +201,11 @@ class WorkflowExecutionService:
         state["last_output"] = waiting.output_data
         state.setdefault("steps", {})[waiting.step_key] = waiting.output_data
         run.output_data = state
-        next_step = self._next_step(run.workflow, run.current_step, "input_available")
-        if next_step is None:
+        pending = self._enqueue_after_event(run, run.current_step, "input_available")
+        if not pending:
             return self._complete(run)
         run.status = "running"
-        run.current_step_id = next_step.id
+        run.current_step_id = self._step_by_key(run.workflow, pending[0]).id
         self.db.commit()
         return self.get_run(run.id, tenant_id)
 
@@ -218,83 +241,275 @@ class WorkflowExecutionService:
             .order_by(WorkflowRun.created_at.desc())
         ).all())
 
-    def _execute(self, run: WorkflowRun, workflow: Workflow, step: WorkflowStep) -> WorkflowRun:
-        executed = len(run.step_runs)
-        current: WorkflowStep | None = step
-        while current is not None:
-            if executed >= MAX_WORKFLOW_STEPS:
-                return self._fail_run(run, "Workflow execution limit reached")
-            run.current_step_id = current.id
-            step_run = WorkflowStepRun(
-                workflow_run=run,
-                workflow_step_id=current.id,
-                sequence=executed,
-                step_key=current.step_key,
-                step_name=current.name,
-                step_type=current.step_type,
-                status="running",
-                input_data=dict(run.output_data),
-                output_data={},
-            )
-            self.db.add(step_run)
+    def _resume_nested_run(
+        self, run: WorkflowRun, step_run: WorkflowStepRun, input_data: dict
+    ) -> WorkflowRun:
+        child_run_id = step_run.output_data.get("workflow_run_id")
+        if not isinstance(child_run_id, str):
+            return self._fail_run(run, "Nested workflow run reference is missing")
+        child = WorkflowExecutionService(self.db, self.llm_client).resume(
+            UUID(child_run_id), run.tenant_id, input_data
+        )
+        additional_cost = max(0.0, child.total_api_cost_usd - step_run.api_cost_usd)
+        step_run.api_cost_usd += additional_cost
+        run.total_api_cost_usd += additional_cost
+        state = dict(run.output_data)
+        state.pop("_nested_resume_input", None)
+
+        if child.status == "waiting":
+            required_input = "Required human input"
+            if child.current_step is not None:
+                configured = child.current_step.config.get("required_input")
+                if isinstance(configured, str) and configured.strip():
+                    required_input = configured
+            step_run.status = "waiting"
+            step_run.output_data = {
+                **step_run.output_data,
+                "required_input": required_input,
+            }
+            run.output_data = state
+            run.status = "waiting"
             self.db.commit()
-            if current.step_type == "human_wait":
-                step_run.status = "waiting"
+            return self.get_run(run.id, run.tenant_id)
+
+        if child.status != "completed":
+            return self._fail_run(
+                run, f"Nested workflow failed: {child.error or child.status}"
+            )
+
+        output = {
+            "content": child.output_data.get("last_output", child.output_data),
+            "workflow_run_id": str(child.id),
+            "workflow_name": step_run.output_data.get("workflow_name", child.workflow.name),
+        }
+        step_run.status = "completed"
+        step_run.output_data = output
+        step_run.completed_at = datetime.now(timezone.utc)
+        self._store_artifact(
+            run, step_run, step_run.step_key, step_run.step_name, "agent_output", output
+        )
+        state["last_output"] = output
+        state.setdefault("steps", {})[step_run.step_key] = output
+        run.output_data = state
+        run.status = "running"
+        pending = self._enqueue_after_event(run, run.current_step, "success")
+        self.db.commit()
+        if not pending:
+            return self._complete(run)
+        next_step = self._step_by_key(run.workflow, pending[0])
+        run.current_step_id = next_step.id
+        self.db.commit()
+        return self._execute(run, run.workflow, next_step)
+
+    def _execute(self, run: WorkflowRun, workflow: Workflow, step: WorkflowStep) -> WorkflowRun:
+        scheduler = self._scheduler(run)
+        if not scheduler["pending"]:
+            scheduler["pending"] = [step.step_key]
+            self._save_scheduler(run, scheduler)
+        while scheduler["pending"]:
+            executed_keys = {item.step_key for item in run.step_runs}
+            pending_keys = list(dict.fromkeys(scheduler["pending"]))
+            scheduler["pending"] = []
+            self._save_scheduler(run, scheduler)
+            wave = [
+                self._step_by_key(workflow, key)
+                for key in pending_keys
+                if key not in executed_keys
+            ]
+            if not wave:
+                break
+            if len(run.step_runs) + len(wave) > MAX_WORKFLOW_STEPS:
+                return self._fail_run(run, "Workflow execution limit reached")
+
+            human_steps = [item for item in wave if item.step_type == "human_wait"]
+            if len(human_steps) > 1:
+                return self._fail_run(run, "Only one parallel Human wait node can be active at a time")
+
+            runs_by_key: dict[str, WorkflowStepRun] = {}
+            sequence_base = len(run.step_runs)
+            for offset, current in enumerate(sorted(wave, key=lambda item: item.position)):
+                step_run = WorkflowStepRun(
+                    workflow_run=run,
+                    workflow_step_id=current.id,
+                    sequence=sequence_base + offset,
+                    step_key=current.step_key,
+                    step_name=current.name,
+                    step_type=current.step_type,
+                    status="running",
+                    input_data=dict(run.output_data),
+                    output_data={},
+                )
+                self.db.add(step_run)
+                runs_by_key[current.step_key] = step_run
+            run.current_step_id = wave[0].id
+            self.db.commit()
+
+            executable = [item for item in wave if item.step_type != "human_wait"]
+            outcomes = self._execute_parallel_wave(run.id, run.tenant_id, executable)
+            fatal_error: str | None = None
+            nested_waiting: list[tuple[WorkflowStep, WorkflowStepRun]] = []
+            for current in sorted(executable, key=lambda item: item.position):
+                step_run = runs_by_key[current.step_key]
+                output, cost, error = outcomes[current.step_key]
+                step_run.completed_at = datetime.now(timezone.utc)
+                if error is None:
+                    if output.get("_nested_waiting"):
+                        step_run.status = "waiting"
+                        step_run.completed_at = None
+                        step_run.output_data = output
+                        step_run.api_cost_usd = cost
+                        run.total_api_cost_usd += cost
+                        nested_waiting.append((current, step_run))
+                        continue
+                    step_run.status = "completed"
+                    step_run.output_data = output
+                    step_run.api_cost_usd = cost
+                    run.total_api_cost_usd += cost
+                    artifact_type = (
+                        "agent_output" if current.step_type in {"agent", "remote_agent", "workflow"}
+                        else "generated_file" if current.step_type == "report"
+                        else "tool_output"
+                    )
+                    self._store_artifact(
+                        run, step_run, current.step_key, current.name, artifact_type, output
+                    )
+                    state = dict(run.output_data)
+                    state["last_output"] = output
+                    state.setdefault("steps", {})[current.step_key] = output
+                    run.output_data = state
+                    next_keys = self._enqueue_after_event(run, current, "success")
+                else:
+                    step_run.status = "failed"
+                    step_run.error = error
+                    state = dict(run.output_data)
+                    state["last_error"] = error
+                    run.output_data = state
+                    next_keys = self._enqueue_after_event(run, current, "failure")
+                    if not next_keys:
+                        fatal_error = error
+            self.db.commit()
+            if fatal_error is not None:
+                return self._fail_run(run, fatal_error)
+
+            if nested_waiting:
+                if len(nested_waiting) > 1 or human_steps:
+                    return self._fail_run(
+                        run, "Only one Human wait can be active across parallel workflow branches"
+                    )
+                waiting_step, _ = nested_waiting[0]
                 run.status = "waiting"
+                run.current_step_id = waiting_step.id
                 self.db.commit()
                 return self.get_run(run.id, run.tenant_id)
-            try:
-                with bind_trace_context(
-                    workflow_run_id=run.id,
-                    workflow_id=workflow.id,
-                    workflow_name=workflow.name,
-                    tenant_id=run.tenant_id,
-                    step_key=current.step_key,
-                ):
-                    output, cost = self._execute_step(
-                        current, self._state_with_artifacts(run), run.attachments
-                    )
-                step_run.status = "completed"
-                step_run.output_data = output
-                step_run.api_cost_usd = cost
-                step_run.completed_at = datetime.now(timezone.utc)
-                run.total_api_cost_usd += cost
-                artifact_type = (
-                    "agent_output" if current.step_type in {"agent", "remote_agent"}
-                    else "generated_file" if current.step_type == "report"
-                    else "tool_output"
-                )
-                self._store_artifact(
-                    run,
-                    step_run,
-                    current.step_key,
-                    current.name,
-                    artifact_type,
-                    output,
-                )
-                state = dict(run.output_data)
-                state["last_output"] = output
-                state.setdefault("steps", {})[current.step_key] = output
-                run.output_data = state
-                next_step = self._next_step(workflow, current, "success")
-            except Exception as exc:  # execution failures are persisted for inspection
-                message = str(exc) or exc.__class__.__name__
-                step_run.status = "failed"
-                step_run.error = message
-                step_run.completed_at = datetime.now(timezone.utc)
-                state = dict(run.output_data)
-                state["last_error"] = message
-                run.output_data = state
-                next_step = self._next_step(workflow, current, "failure")
-                if next_step is None:
-                    self.db.commit()
-                    return self._fail_run(run, message)
+
+            if human_steps:
+                waiting_step = human_steps[0]
+                waiting_run = runs_by_key[waiting_step.step_key]
+                waiting_run.status = "waiting"
+                run.status = "waiting"
+                run.current_step_id = waiting_step.id
+                self.db.commit()
+                return self.get_run(run.id, run.tenant_id)
+
+            self.db.refresh(run)
+            scheduler = self._scheduler(run)
+            if scheduler["pending"]:
+                run.current_step_id = self._step_by_key(workflow, scheduler["pending"][0]).id
             self.db.commit()
-            current = next_step
-            executed += 1
+        scheduler = self._scheduler(run)
+        if scheduler["arrivals"]:
+            waiting = ", ".join(sorted(scheduler["arrivals"]))
+            return self._fail_run(
+                run,
+                f"Parallel join did not receive every required branch: {waiting}",
+            )
         return self._complete(run)
 
+    def _execute_parallel_wave(
+        self, run_id: UUID, tenant_id: UUID, steps: list[WorkflowStep]
+    ) -> dict[str, tuple[dict, float, str | None]]:
+        if not steps:
+            return {}
+        results: dict[str, tuple[dict, float, str | None]] = {}
+        workers = min(4, len(steps))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="workflow-branch") as pool:
+            futures = {
+                pool.submit(self._execute_step_isolated, run_id, tenant_id, step.id): step.step_key
+                for step in steps
+            }
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    output, cost = future.result()
+                    results[key] = (output, cost, None)
+                except Exception as exc:
+                    results[key] = ({}, 0.0, str(exc) or exc.__class__.__name__)
+        return results
+
+    def _execute_step_isolated(
+        self, run_id: UUID, tenant_id: UUID, step_id: UUID
+    ) -> tuple[dict, float]:
+        worker_db = Session(bind=self.db.get_bind())
+        try:
+            service = WorkflowExecutionService(worker_db, self.llm_client)
+            run = service.get_run(run_id, tenant_id)
+            step = next(item for item in run.workflow.steps if item.id == step_id)
+            with bind_trace_context(
+                workflow_run_id=run.id,
+                workflow_id=run.workflow.id,
+                workflow_name=run.workflow.name,
+                tenant_id=run.tenant_id,
+                step_key=step.step_key,
+            ):
+                result = service._execute_step(step, service._state_with_artifacts(run), run.attachments)
+                worker_db.commit()
+                return result
+        except Exception:
+            worker_db.rollback()
+            raise
+        finally:
+            worker_db.close()
+
     def _execute_step(self, step: WorkflowStep, state: dict, attachments: list) -> tuple[dict, float]:
+        if step.step_type == "workflow" and step.target_workflow is not None:
+            target = step.target_workflow
+            if not target.is_active:
+                raise WorkflowError(f"Nested workflow is inactive: {target.name}")
+            started_by = state.get("_started_by_user_id")
+            if not started_by:
+                raise WorkflowError("Nested workflow is missing its initiating user")
+            child_input = {
+                "request": state.get("request") or state.get("prompt") or f"Run {target.name}.",
+                "parent_output": state.get("last_output"),
+            }
+            child = WorkflowExecutionService(self.db, self.llm_client).start(
+                target.id,
+                target.tenant_id,
+                UUID(str(started_by)),
+                child_input,
+                [],
+            )
+            if child.status == "waiting":
+                required_input = "Required human input"
+                if child.current_step is not None:
+                    configured = child.current_step.config.get("required_input")
+                    if isinstance(configured, str) and configured.strip():
+                        required_input = configured
+                return {
+                    "_nested_waiting": True,
+                    "workflow_run_id": str(child.id),
+                    "workflow_name": target.name,
+                    "required_input": required_input,
+                }, child.total_api_cost_usd
+            if child.status != "completed":
+                raise WorkflowError(
+                    f"Nested workflow '{target.name}' did not complete: {child.error or child.status}"
+                )
+            return {
+                "content": child.output_data.get("last_output", child.output_data),
+                "workflow_run_id": str(child.id),
+                "workflow_name": target.name,
+            }, child.total_api_cost_usd
         if step.step_type == "remote_agent" and step.remote_agent is not None:
             artifacts = [
                 {"key": item.artifact_key, "name": item.name, "type": item.artifact_type, "data": item.data}
@@ -306,7 +521,7 @@ class WorkflowExecutionService:
                 artifacts = [item for item in artifacts if item["key"] in allowed]
             task = str(step.config.get("task_instructions", "")).strip() or f"Execute workflow step '{step.name}'."
             context = json.dumps(artifacts, ensure_ascii=False, default=str, separators=(",", ":"))
-            text, context_id, cost = RemoteAgentService(self.db).send(
+            text, context_id, cost, _, _, _ = RemoteAgentService(self.db).send(
                 step.remote_agent.id,
                 step.remote_agent.tenant_id,
                 step.remote_agent.owner_user_id,
@@ -510,7 +725,66 @@ class WorkflowExecutionService:
     def _state_with_artifacts(run: WorkflowRun) -> dict:
         state = {**run.input_data, **run.output_data}
         state["artifacts"] = list(run.artifacts)
+        state["_started_by_user_id"] = str(run.started_by_user_id) if run.started_by_user_id else None
         return state
+
+    @staticmethod
+    def _scheduler(run: WorkflowRun) -> dict:
+        raw = run.output_data.get("_scheduler", {}) if isinstance(run.output_data, dict) else {}
+        arrivals = raw.get("arrivals", {}) if isinstance(raw, dict) else {}
+        return {
+            "pending": list(raw.get("pending", [])) if isinstance(raw, dict) else [],
+            "arrivals": {
+                str(key): list(value)
+                for key, value in arrivals.items()
+                if isinstance(value, list)
+            },
+        }
+
+    @staticmethod
+    def _save_scheduler(run: WorkflowRun, scheduler: dict) -> None:
+        state = dict(run.output_data or {})
+        state["_scheduler"] = scheduler
+        run.output_data = state
+
+    @staticmethod
+    def _step_by_key(workflow: Workflow, step_key: str) -> WorkflowStep:
+        step = next((item for item in workflow.steps if item.step_key == step_key), None)
+        if step is None:
+            raise WorkflowError(f"Workflow step not found: {step_key}")
+        return step
+
+    @staticmethod
+    def _matching_routes(step: WorkflowStep, event: str) -> list[WorkflowRoute]:
+        routes = sorted(step.outgoing_routes, key=lambda item: item.priority)
+        matches = [item for item in routes if item.condition == event]
+        return matches or [item for item in routes if item.condition == "always"]
+
+    def _enqueue_after_event(
+        self, run: WorkflowRun, step: WorkflowStep, event: str
+    ) -> list[str]:
+        scheduler = self._scheduler(run)
+        newly_ready: list[str] = []
+        executed = {item.step_key for item in run.step_runs if item.status != "waiting"}
+        for route in self._matching_routes(step, event):
+            target = route.target_step
+            if target.step_key in executed or target.step_key in scheduler["pending"]:
+                continue
+            arrivals = scheduler["arrivals"].setdefault(target.step_key, [])
+            if step.step_key not in arrivals:
+                arrivals.append(step.step_key)
+            incoming_sources = {
+                item.source_step.step_key for item in target.incoming_routes
+            }
+            default_mode = "all" if len(incoming_sources) > 1 else "any"
+            join_mode = str(target.config.get("join_mode", default_mode))
+            ready = join_mode == "any" or incoming_sources.issubset(set(arrivals))
+            if ready:
+                scheduler["pending"].append(target.step_key)
+                scheduler["arrivals"].pop(target.step_key, None)
+                newly_ready.append(target.step_key)
+        self._save_scheduler(run, scheduler)
+        return newly_ready
 
     @staticmethod
     def _start_step(workflow: Workflow) -> WorkflowStep:
@@ -521,17 +795,6 @@ class WorkflowExecutionService:
         if len(starts) != 1:
             raise WorkflowError("Workflow must have exactly one start step")
         return starts[0]
-
-    @staticmethod
-    def _next_step(workflow: Workflow, step: WorkflowStep, event: str) -> WorkflowStep | None:
-        routes = sorted(
-            (route for route in workflow.routes if route.source_step_id == step.id),
-            key=lambda item: item.priority,
-        )
-        route = next((item for item in routes if item.condition == event), None)
-        if route is None:
-            route = next((item for item in routes if item.condition == "always"), None)
-        return route.target_step if route else None
 
     def _complete(self, run: WorkflowRun) -> WorkflowRun:
         run.status = "completed"

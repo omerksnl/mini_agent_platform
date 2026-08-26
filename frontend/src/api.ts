@@ -128,7 +128,7 @@ export type Attachment = {
 export type CollectionDocument = { id: string; original_name: string; content_type: string; size_bytes: number; chunk_count: number; created_at: string };
 export type Collection = { id: string; tenant_id: string; name: string; description: string; documents: CollectionDocument[]; created_at: string; updated_at: string };
 
-export type WorkflowStepType = "agent" | "remote_agent" | "http_tool" | "system_tool" | "human_wait" | "report";
+export type WorkflowStepType = "agent" | "remote_agent" | "workflow" | "http_tool" | "system_tool" | "human_wait" | "report";
 export type WorkflowRouteCondition = "success" | "failure" | "input_available" | "always";
 export type WorkflowStepInput = {
   step_key: string;
@@ -137,6 +137,7 @@ export type WorkflowStepInput = {
   position: number;
   agent_id: string | null;
   remote_agent_id: string | null;
+  target_workflow_id: string | null;
   http_tool_id: string | null;
   system_tool_name: string | null;
   config: Record<string, unknown>;
@@ -173,6 +174,8 @@ export type RemoteAgent = {
   agent_card_url: string;
   endpoint_url: string;
   protocol_version: string;
+  billing_mode: "owner" | "caller";
+  provider_credential_id: string | null;
   skills: Array<{ id?: string; name?: string; description?: string; tags?: string[] }>;
   created_at: string;
   updated_at: string;
@@ -403,17 +406,17 @@ export const api = {
   listRemoteAgents() {
     return request<RemoteAgent[]>("/api/remote-agents");
   },
-  createRemoteAgent(agentCardUrl: string, apiKey: string) {
+  createRemoteAgent(agentCardUrl: string, apiKey: string, billingMode: "owner" | "caller", providerCredentialId: string | null) {
     return request<RemoteAgent>("/api/remote-agents", {
       method: "POST",
-      body: JSON.stringify({ agent_card_url: agentCardUrl, api_key: apiKey }),
+      body: JSON.stringify({ agent_card_url: agentCardUrl, api_key: apiKey, billing_mode: billingMode, provider_credential_id: providerCredentialId }),
     });
   },
   deleteRemoteAgent(id: string) {
     return request<void>(`/api/remote-agents/${id}`, { method: "DELETE" });
   },
   sendRemoteAgentMessage(id: string, content: string, attachmentIds: string[] = []) {
-    return request<{ content: string; context_id: string | null; api_cost_usd: number }>(`/api/remote-agents/${id}/messages`, {
+    return request<{ content: string; context_id: string | null; api_cost_usd: number; billing_mode: "owner" | "caller"; billed_to: "agent_owner" | "caller"; provider: "openrouter" | "openai" | null }>(`/api/remote-agents/${id}/messages`, {
       method: "POST",
       body: JSON.stringify({ content, attachment_ids: attachmentIds }),
     });

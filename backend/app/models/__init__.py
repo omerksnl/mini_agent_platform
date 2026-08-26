@@ -176,6 +176,9 @@ class Agent(Base):
     a2a_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     a2a_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     a2a_api_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    a2a_published_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     system_tools: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=lambda: ["calculator", "current_datetime"]
     )
@@ -330,6 +333,10 @@ class RemoteAgent(Base):
     agent_card_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     endpoint_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    billing_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="owner")
+    provider_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("provider_credentials.id", ondelete="SET NULL"), nullable=True
+    )
     protocol_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
     skills: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -339,6 +346,26 @@ class RemoteAgent(Base):
 
     tenant: Mapped[Tenant] = relationship(back_populates="remote_agents")
     owner_user: Mapped[User] = relationship(back_populates="remote_agents")
+
+
+class A2ACallUsage(Base):
+    __tablename__ = "a2a_call_usage"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    remote_agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    billing_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    billed_to: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class HttpTool(Base):
@@ -393,6 +420,7 @@ class Workflow(Base):
         back_populates="workflow",
         cascade="all, delete-orphan",
         order_by="WorkflowStep.position",
+        foreign_keys="WorkflowStep.workflow_id",
     )
     routes: Mapped[list["WorkflowRoute"]] = relationship(
         back_populates="workflow",
@@ -410,7 +438,7 @@ class WorkflowStep(Base):
         UniqueConstraint("workflow_id", "step_key", name="uq_workflow_steps_key"),
         UniqueConstraint("workflow_id", "position", name="uq_workflow_steps_position"),
         CheckConstraint(
-            "step_type IN ('agent', 'remote_agent', 'http_tool', 'system_tool', 'human_wait', 'report')",
+            "step_type IN ('agent', 'remote_agent', 'workflow', 'http_tool', 'system_tool', 'human_wait', 'report')",
             name="ck_workflow_steps_type",
         ),
     )
@@ -429,16 +457,26 @@ class WorkflowStep(Base):
     remote_agent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="RESTRICT"), nullable=True
     )
+    target_workflow_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True
+    )
     http_tool_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("http_tools.id", ondelete="RESTRICT"), nullable=True
     )
     system_tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    workflow: Mapped[Workflow] = relationship(back_populates="steps")
+    workflow: Mapped[Workflow] = relationship(back_populates="steps", foreign_keys=[workflow_id])
     agent: Mapped[Agent | None] = relationship(foreign_keys=[agent_id])
     remote_agent: Mapped[RemoteAgent | None] = relationship(foreign_keys=[remote_agent_id])
+    target_workflow: Mapped[Workflow | None] = relationship(foreign_keys=[target_workflow_id])
     http_tool: Mapped[HttpTool | None] = relationship(foreign_keys=[http_tool_id])
+    outgoing_routes: Mapped[list["WorkflowRoute"]] = relationship(
+        foreign_keys="WorkflowRoute.source_step_id", viewonly=True
+    )
+    incoming_routes: Mapped[list["WorkflowRoute"]] = relationship(
+        foreign_keys="WorkflowRoute.target_step_id", viewonly=True
+    )
 
 
 class WorkflowRoute(Base):
@@ -497,6 +535,9 @@ class WorkflowRun(Base):
     )
     workflow_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     current_step_id: Mapped[uuid.UUID | None] = mapped_column(

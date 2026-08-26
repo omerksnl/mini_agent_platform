@@ -240,6 +240,7 @@ export function WorkflowsPage() {
         step_key: step.step_key.trim(), name: step.name.trim(), step_type: step.step_type, position,
         agent_id: step.step_type === "agent" ? step.target_id : null,
         remote_agent_id: step.step_type === "remote_agent" ? step.target_id : null,
+        target_workflow_id: step.step_type === "workflow" ? step.target_id : null,
         http_tool_id: step.step_type === "http_tool" ? step.target_id : null,
         system_tool_name: step.step_type === "system_tool" ? step.system_tool_name : null,
         config: step.step_type === "human_wait"

@@ -78,7 +78,9 @@ class WorkflowService:
         if steps is not None and routes is not None:
             step_inputs = [WorkflowStepInput.model_validate(item) for item in steps]
             route_inputs = [WorkflowRouteInput.model_validate(item) for item in routes]
-            self._validate_definition(tenant_id, step_inputs, route_inputs, user_id)
+            self._validate_definition(
+                tenant_id, step_inputs, route_inputs, user_id, current_workflow_id=workflow.id
+            )
             workflow.routes.clear()
             self.db.flush()
             workflow.steps.clear()
@@ -108,6 +110,7 @@ class WorkflowService:
                 position=item.position,
                 agent_id=item.agent_id,
                 remote_agent_id=item.remote_agent_id,
+                target_workflow_id=item.target_workflow_id,
                 http_tool_id=item.http_tool_id,
                 system_tool_name=item.system_tool_name,
                 config=item.config,
@@ -134,6 +137,7 @@ class WorkflowService:
         steps: list[WorkflowStepInput],
         routes: list[WorkflowRouteInput],
         user_id: UUID | None = None,
+        current_workflow_id: UUID | None = None,
     ) -> None:
         keys = [item.step_key for item in steps]
         positions = [item.position for item in steps]
@@ -177,6 +181,21 @@ class WorkflowService:
             if found_remote != set(remote_ids):
                 raise WorkflowError("One or more remote workflow agents were not found", 404)
 
+        nested_ids = list({
+            item.target_workflow_id for item in steps if item.target_workflow_id is not None
+        })
+        if current_workflow_id is not None and current_workflow_id in nested_ids:
+            raise WorkflowError("A workflow cannot call itself")
+        if nested_ids:
+            found_workflows = set(self.db.scalars(select(Workflow.id).where(
+                Workflow.id.in_(nested_ids),
+                Workflow.tenant_id == tenant_id,
+            )).all())
+            if found_workflows != set(nested_ids):
+                raise WorkflowError("One or more nested workflows were not found", 404)
+            if current_workflow_id is not None:
+                self._reject_nested_cycle(current_workflow_id, nested_ids)
+
         tool_ids = list({item.http_tool_id for item in steps if item.http_tool_id is not None})
         if tool_ids:
             found_tools = set(self.db.scalars(select(HttpTool.id).where(
@@ -206,6 +225,25 @@ class WorkflowService:
 
         for node in nodes:
             visit(node)
+
+    def _reject_nested_cycle(self, root_id: UUID, nested_ids: list[UUID]) -> None:
+        rows = self.db.execute(select(
+            WorkflowStep.workflow_id, WorkflowStep.target_workflow_id
+        ).where(WorkflowStep.target_workflow_id.is_not(None))).all()
+        adjacency: dict[UUID, set[UUID]] = {}
+        for source, target in rows:
+            adjacency.setdefault(source, set()).add(target)
+        adjacency[root_id] = set(nested_ids)
+
+        def reaches_root(node: UUID, visiting: set[UUID]) -> bool:
+            if node == root_id:
+                return True
+            if node in visiting:
+                return False
+            return any(reaches_root(target, visiting | {node}) for target in adjacency.get(node, set()))
+
+        if any(reaches_root(target, set()) for target in nested_ids):
+            raise WorkflowError("Nested workflow references must not contain cycles")
 
     def _ensure_name_available(
         self, tenant_id: UUID, name: str, exclude_id: UUID | None = None

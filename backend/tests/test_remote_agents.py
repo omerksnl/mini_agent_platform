@@ -117,6 +117,7 @@ def test_remote_message_uses_encrypted_key_and_returns_a2a_text(client: TestClie
     assert response.status_code == 200, response.text
     assert response.json() == {
         "content": "Task complete", "context_id": "context-1", "api_cost_usd": 0.004321,
+        "billing_mode": "owner", "billed_to": "agent_owner", "provider": None,
     }
 
 
