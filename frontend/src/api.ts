@@ -104,7 +104,7 @@ export type VisualModel = {
   image_height: number;
   channels: 1 | 3;
   use_pretrained_weights: boolean;
-  status: "draft";
+  status: "draft" | "dataset_ready" | "training" | "trained" | "training_failed";
   created_at: string;
   updated_at: string;
 };
@@ -127,6 +127,34 @@ export type VisualDatasetUploadResult = {
   added_images: number;
   skipped_duplicates: number;
   summary: VisualDatasetSummary;
+};
+
+export type VisualTrainingRun = {
+  id: string;
+  tenant_id: string;
+  visual_model_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress: number;
+  epochs: number;
+  batch_size: number;
+  validation_split: number;
+  learning_rate: number;
+  current_epoch: number;
+  metrics: Record<string, number>;
+  artifact_path: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type VisualTrainingInput = Pick<VisualTrainingRun, "epochs" | "batch_size" | "validation_split" | "learning_rate">;
+
+export type VisualPrediction = {
+  predicted_class: string;
+  confidence: number;
+  scores: Array<{ class_name: string; probability: number }>;
+  training_run_id: string;
 };
 
 export type ToolParameter = {
@@ -551,6 +579,14 @@ export const api = {
     return request<VisualDatasetUploadResult>(`/api/visual-models/${id}/dataset`, { method: "POST", body });
   },
   clearVisualDataset(id: string) { return request<void>(`/api/visual-models/${id}/dataset`, { method: "DELETE" }); },
+  startVisualTraining(id: string, body: VisualTrainingInput) { return request<VisualTrainingRun>(`/api/visual-models/${id}/training-runs`, { method: "POST", body: JSON.stringify(body) }); },
+  getLatestVisualTraining(id: string) { return request<VisualTrainingRun | null>(`/api/visual-models/${id}/training-runs/latest`); },
+  getVisualTrainingRun(id: string) { return request<VisualTrainingRun>(`/api/visual-models/training-runs/${id}`); },
+  predictVisualModel(id: string, image: File) {
+    const body = new FormData();
+    body.append("image", image);
+    return request<VisualPrediction>(`/api/visual-models/${id}/predict`, { method: "POST", body });
+  },
   updateWorkflow(id: string, body: Partial<WorkflowInput>) {
     return request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   },

@@ -216,6 +216,9 @@ class VisualModel(Base):
     dataset_images: Mapped[list["VisualDatasetImage"]] = relationship(
         back_populates="visual_model", cascade="all, delete-orphan"
     )
+    training_runs: Mapped[list["VisualTrainingRun"]] = relationship(
+        back_populates="visual_model", cascade="all, delete-orphan"
+    )
 
 
 class VisualDatasetImage(Base):
@@ -243,6 +246,33 @@ class VisualDatasetImage(Base):
 
     tenant: Mapped[Tenant] = relationship(back_populates="visual_dataset_images")
     visual_model: Mapped[VisualModel] = relationship(back_populates="dataset_images")
+
+
+class VisualTrainingRun(Base):
+    __tablename__ = "visual_training_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    visual_model_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("visual_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    epochs: Mapped[int] = mapped_column(Integer, nullable=False)
+    batch_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    validation_split: Mapped[float] = mapped_column(Float, nullable=False)
+    learning_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    current_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    artifact_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    visual_model: Mapped[VisualModel] = relationship(back_populates="training_runs")
 
 
 class Agent(Base):

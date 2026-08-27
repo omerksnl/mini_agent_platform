@@ -49,7 +49,7 @@ class VisualModelResponse(VisualModelCreate):
 
     id: UUID
     tenant_id: UUID
-    status: Literal["draft", "dataset_ready"]
+    status: Literal["draft", "dataset_ready", "training", "trained", "training_failed"]
     created_at: datetime
     updated_at: datetime
 
@@ -72,3 +72,39 @@ class VisualDatasetUploadResponse(BaseModel):
     added_images: int
     skipped_duplicates: int
     summary: VisualDatasetSummary
+
+
+class VisualTrainingRunCreate(BaseModel):
+    epochs: int = Field(default=5, ge=1, le=100)
+    batch_size: int = Field(default=16, ge=1, le=256)
+    validation_split: float = Field(default=0.2, ge=0.1, le=0.5)
+    learning_rate: float = Field(default=0.001, gt=0, le=0.1)
+
+
+class VisualTrainingRunResponse(VisualTrainingRunCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    visual_model_id: UUID
+    status: Literal["queued", "running", "completed", "failed"]
+    progress: int
+    current_epoch: int
+    metrics: dict
+    artifact_path: str | None
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class VisualPredictionScore(BaseModel):
+    class_name: str
+    probability: float
+
+
+class VisualPredictionResponse(BaseModel):
+    predicted_class: str
+    confidence: float
+    scores: list[VisualPredictionScore]
+    training_run_id: UUID
