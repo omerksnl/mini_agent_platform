@@ -27,6 +27,7 @@ OPENROUTER_MODELS = [
 ]
 OPENAI_MODELS = [
     ProviderModelResponse(id="gpt-4o-mini", label="GPT-4o mini"),
+    ProviderModelResponse(id="gpt-4.1-nano", label="GPT-4.1 nano"),
     ProviderModelResponse(id="gpt-4.1-mini", label="GPT-4.1 mini"),
     ProviderModelResponse(id="gpt-4.1", label="GPT-4.1"),
 ]

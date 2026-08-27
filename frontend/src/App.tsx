@@ -12,6 +12,9 @@ import { CollectionsPage } from "./pages/CollectionsPage";
 import { WorkflowsPage } from "./pages/WorkflowsPage";
 import { WorkflowStudioPage } from "./pages/WorkflowStudioPage";
 import { ProviderSettingsPage } from "./pages/ProviderSettingsPage";
+import { GuardrailsPage } from "./pages/GuardrailsPage";
+import { HomePage } from "./pages/HomePage";
+import { ProfilePage } from "./pages/ProfilePage";
 import { useGlobalInputUndo } from "./useGlobalInputUndo";
 
 export default function App() {
@@ -23,14 +26,18 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<AgentsPage />} />
+            <Route path="/" element={<HomePage />} />
+            <Route path="/agents" element={<AgentsPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/collections" element={<CollectionsPage />} />
+            <Route path="/guardrails" element={<GuardrailsPage />} />
             <Route path="/multi-agent" element={<WorkflowsPage />} />
             <Route path="/workflows" element={<WorkflowStudioPage />} />
-            <Route path="/settings/provider" element={<ProviderSettingsPage />} />
+            <Route path="/providers" element={<ProviderSettingsPage />} />
+            <Route path="/settings/provider" element={<Navigate to="/providers" replace />} />
+            <Route path="/profile" element={<ProfilePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -31,6 +31,7 @@ from app.core.tools.remote_agent_tools import build_remote_agent_tools, remote_a
 from app.core.services.remote_agent_service import RemoteAgentService
 from app.core.candidate_profile import normalize_candidate_profile_json
 from app.core.observability import build_langfuse_handler, langfuse_metadata
+from app.core.guardrails import GuardrailRunner, GuardrailViolation
 from app.core.services.provider_service import ProviderCredentials, ProviderError, ProviderService
 
 
@@ -177,6 +178,18 @@ class OpenRouterLLMClient:
         skip_request_routing: bool = False,
         max_output_tokens: int | None = None,
     ) -> LLMResult:
+        guardrails = GuardrailRunner(agent.guardrails, agent_name=agent.name, tenant_id=agent.tenant_id)
+        guarded_messages = []
+        try:
+            for message in messages:
+                guarded_messages.append({
+                    **message,
+                    "content": guardrails.apply("input", message["content"])
+                    if message.get("role") == "user" else message["content"],
+                })
+        except GuardrailViolation as exc:
+            raise LLMError(f"Guardrail blocked the request: {exc}") from exc
+        messages = guarded_messages
         is_supervisor = agent.agent_type == "supervisor"
         is_router = agent.agent_type == "router"
         if is_supervisor and not (agent.managed_agents or agent.managed_remote_agents):
@@ -220,7 +233,7 @@ class OpenRouterLLMClient:
                 raise LLMError(str(exc)) from exc
         model = self._chat_model(agent.model, agent.temperature, max_tokens, credentials)
         if is_router:
-            return self._complete_router(
+            router_result = self._complete_router(
                 agent,
                 model,
                 messages,
@@ -229,6 +242,17 @@ class OpenRouterLLMClient:
                 cost_callback,
                 tracing_callbacks,
                 tracing_metadata,
+            )
+            try:
+                guarded_content = guardrails.apply("output", router_result.content)
+            except GuardrailViolation as exc:
+                raise LLMError(f"Guardrail blocked the response: {exc}") from exc
+            return LLMResult(
+                content=guarded_content,
+                used_tools=router_result.used_tools,
+                used_skills=router_result.used_skills,
+                used_agents=router_result.used_agents,
+                api_cost_usd=router_result.api_cost_usd,
             )
         selected_system_tools = [
             SYSTEM_TOOL_MAP[name]
@@ -310,6 +334,8 @@ class OpenRouterLLMClient:
                 return text
 
             selected_tools.extend(build_remote_delegation_tools(agent, delegate_to_remote))
+
+        selected_tools = guardrails.wrap_tools(selected_tools)
 
         if attachments and not is_supervisor and "pdf_to_text" not in agent.system_tools and agent.remote_agent_tools:
             latest_user = next(
@@ -486,6 +512,10 @@ class OpenRouterLLMClient:
         content = self._append_generated_file_links(content, result_messages)
         if any(skill.name == "cv_extraction" for skill in selected_skills):
             content = normalize_candidate_profile_json(content)
+        try:
+            content = guardrails.apply("output", content)
+        except GuardrailViolation as exc:
+            raise LLMError(f"Guardrail blocked the response: {exc}") from exc
         return LLMResult(
             content=content,
             used_tools=[name for name in used_tools if not name.startswith(("delegate_to_", "ask_remote_"))],
@@ -735,6 +765,12 @@ class OpenRouterLLMClient:
                 else router.invoke(router_messages)
             )
         except Exception as exc:
+            logger.exception(
+                "Request routing failed: model=%s provider=%s error_type=%s",
+                getattr(model, "model_name", "unknown"),
+                getattr(getattr(self, "credentials", None), "provider", "unknown"),
+                type(exc).__name__,
+            )
             raise LLMError("The request router failed") from exc
         decision.skill_names = list(dict.fromkeys(decision.skill_names))
         decision.required_tool_names = list(dict.fromkeys(decision.required_tool_names))

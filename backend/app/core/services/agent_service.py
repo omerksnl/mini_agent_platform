@@ -8,6 +8,7 @@ from app.schemas.agent import AgentCreate, AgentUpdate
 from app.core.services.tool_service import ToolError, ToolService
 from app.core.services.skill_service import SkillError, SkillService
 from app.core.services.collection_service import CollectionError, CollectionService
+from app.core.services.guardrail_service import GuardrailError, GuardrailService
 
 AVAILABLE_SYSTEM_TOOLS = {"calculator", "current_datetime", "pdf_to_text", "text_to_pdf"}
 
@@ -55,6 +56,7 @@ class AgentService:
             raise AgentError(exc.message, exc.status_code) from exc
         skills = self._get_skills(payload.skill_ids, tenant_id)
         collections = self._get_collections(payload.collection_ids, tenant_id)
+        guardrails = self._get_guardrails(payload.guardrail_ids, tenant_id)
         managed_agents = self._get_managed_agents(payload.managed_agent_ids, tenant_id)
         router_targets = self._get_router_targets(payload.router_target_ids, tenant_id)
         managed_remote_agents = self._get_remote_agents(payload.managed_remote_agent_ids, tenant_id, user_id)
@@ -68,9 +70,11 @@ class AgentService:
             system_prompt=payload.system_prompt,
             model=payload.model,
             temperature=payload.temperature,
+            collection_search_limit=payload.collection_search_limit,
             system_tools=payload.system_tools,
             http_tools=http_tools,
             collections=collections,
+            guardrails=guardrails,
             managed_agents=managed_agents,
             router_targets=router_targets,
             managed_remote_agents=managed_remote_agents,
@@ -93,6 +97,7 @@ class AgentService:
         tool_ids = data.pop("tool_ids", None)
         skill_ids = data.pop("skill_ids", None)
         collection_ids = data.pop("collection_ids", None)
+        guardrail_ids = data.pop("guardrail_ids", None)
         managed_agent_ids = data.pop("managed_agent_ids", None)
         router_target_ids = data.pop("router_target_ids", None)
         managed_remote_agent_ids = data.pop("managed_remote_agent_ids", None)
@@ -127,6 +132,8 @@ class AgentService:
             agent.skill_links = [AgentSkill(skill=skill, position=index) for index, skill in enumerate(skills)]
         if collection_ids is not None:
             agent.collections = self._get_collections(collection_ids, tenant_id)
+        if guardrail_ids is not None:
+            agent.guardrails = self._get_guardrails(guardrail_ids, tenant_id)
         if managed_agent_ids is not None:
             agent.managed_agents = self._get_managed_agents(managed_agent_ids, tenant_id, supervisor_id=agent.id)
         if router_target_ids is not None:
@@ -220,6 +227,12 @@ class AgentService:
         try:
             return CollectionService(self.db).get_many(collection_ids, tenant_id)
         except CollectionError as exc:
+            raise AgentError(exc.message, exc.status_code) from exc
+
+    def _get_guardrails(self, guardrail_ids: list[UUID], tenant_id: UUID) -> list:
+        try:
+            return GuardrailService(self.db).get_many(guardrail_ids, tenant_id)
+        except GuardrailError as exc:
             raise AgentError(exc.message, exc.status_code) from exc
 
     def _get_managed_agents(

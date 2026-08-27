@@ -14,7 +14,12 @@ def build_collection_search_tool(db: Session, agent: Agent) -> StructuredTool:
     collection_ids: list[UUID] = [item.id for item in agent.collections]
 
     def search(query: str) -> str:
-        results = CollectionService(db).search(agent.tenant_id, collection_ids, query)
+        results = CollectionService(db).search(
+            agent.tenant_id,
+            collection_ids,
+            query,
+            limit=agent.collection_search_limit,
+        )
         if not results:
             return "No relevant information was found in the assigned collections."
         blocks = []

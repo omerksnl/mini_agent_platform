@@ -44,8 +44,8 @@ export function ProviderSettingsPage() {
   async function activate(id: string) { await api.activateProviderCredential(id); setMessage("Active API key changed."); await load(); }
   async function remove(id: string) { await api.deleteProviderCredential(id); setMessage("Saved API key removed."); await load(); }
 
-  return <main className="page-shell"><AppHeader />
-    <section className="box provider-settings-card">
+  return <div className="app-shell"><AppHeader />
+    <main className="provider-settings-page"><section className="box provider-settings-card">
       <div><h1>AI provider</h1><p>Use the platform default or bring your own OpenRouter/OpenAI API key.</p></div>
       {error ? <p className="error">{error}</p> : null}{message ? <p className="success-note">{message}</p> : null}
       <div className="provider-status"><span className="status-pill">{settings?.source === "personal" ? "Personal key" : "Platform default"}</span><strong>{settings?.provider === "openai" ? "OpenAI" : "OpenRouter"}</strong><small>{settings?.masked_key ?? "No personal key stored"}</small></div>
@@ -58,6 +58,6 @@ export function ProviderSettingsPage() {
       </form>
       <div className="saved-provider-section"><h2>Saved API keys</h2>{credentials.length ? <ul className="saved-provider-list">{credentials.map((item) => <li key={item.id} className={item.is_active ? "active" : ""}><div><strong>{item.name}</strong><span>{item.provider === "openai" ? "OpenAI" : "OpenRouter"}</span><small>{item.masked_key}</small></div><div>{item.is_active ? <span className="status-pill">Active</span> : <button className="btn" type="button" onClick={() => void activate(item.id)}>Use</button>}<button className="btn" type="button" onClick={() => void remove(item.id)}>Delete</button></div></li>)}</ul> : <p className="field-help">No saved personal API keys yet.</p>}</div>
       <p className="field-help">Assign a saved profile from an agent, router, or supervisor edit screen. Direct OpenAI profiles require an OpenAI model; OpenRouter profiles can run models from multiple providers.</p>
-    </section>
-  </main>;
+    </section></main>
+  </div>;
 }

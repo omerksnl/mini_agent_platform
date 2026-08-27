@@ -29,6 +29,13 @@ agent_collections = Table(
     Column("collection_id", UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True),
 )
 
+agent_guardrails = Table(
+    "agent_guardrails",
+    Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("guardrail_id", UUID(as_uuid=True), ForeignKey("guardrails.id", ondelete="CASCADE"), primary_key=True),
+)
+
 supervisor_agents = Table(
     "supervisor_agents", Base.metadata,
     Column("supervisor_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
@@ -154,6 +161,30 @@ class AgentProviderAssignment(Base):
     )
 
 
+class Guardrail(Base):
+    __tablename__ = "guardrails"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_guardrails_tenant_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    guardrail_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    stages: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    action: Mapped[str] = mapped_column(String(20), nullable=False, default="block")
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    agents: Mapped[list["Agent"]] = relationship(
+        secondary=agent_guardrails, back_populates="guardrails"
+    )
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -173,6 +204,7 @@ class Agent(Base):
         String(128), nullable=False, default="anthropic/claude-haiku-4.5"
     )
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+    collection_search_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     a2a_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     a2a_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     a2a_api_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -203,6 +235,9 @@ class Agent(Base):
     )
     collections: Mapped[list["Collection"]] = relationship(
         secondary=agent_collections, back_populates="agents"
+    )
+    guardrails: Mapped[list["Guardrail"]] = relationship(
+        secondary=agent_guardrails, back_populates="agents"
     )
 
     managed_agents: Mapped[list["Agent"]] = relationship(
@@ -263,6 +298,10 @@ class Agent(Base):
     @property
     def collection_ids(self) -> list[uuid.UUID]:
         return [item.id for item in self.collections]
+
+    @property
+    def guardrail_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.guardrails]
 
     @property
     def managed_agent_ids(self) -> list[uuid.UUID]:

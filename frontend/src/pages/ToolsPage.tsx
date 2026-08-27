@@ -7,6 +7,7 @@ import {
   type ToolParameter,
 } from "../api";
 import { AppHeader } from "../components/AppHeader";
+import { SingleAgentWorkspaceHeader } from "../components/SingleAgentWorkspaceHeader";
 
 const emptyForm: HttpToolInput = {
   name: "",
@@ -128,6 +129,7 @@ export function ToolsPage() {
   return (
     <div className="app-shell">
       <AppHeader />
+      <SingleAgentWorkspaceHeader />
 
       <main className="layout">
         <section className="box panel">

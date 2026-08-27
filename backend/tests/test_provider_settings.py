@@ -38,6 +38,7 @@ def test_personal_provider_key_is_encrypted_and_can_be_cleared(client, db_sessio
     models = client.get("/api/provider-settings/models", headers=headers)
     assert models.status_code == 200
     assert "gpt-4o-mini" in [item["id"] for item in models.json()]
+    assert "gpt-4.1-nano" in [item["id"] for item in models.json()]
 
     listed = client.get("/api/provider-settings/credentials", headers=headers)
     assert listed.status_code == 200

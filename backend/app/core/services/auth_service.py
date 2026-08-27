@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import Tenant, User
-from app.schemas.auth import LoginRequest, RegisterRequest
+from app.schemas.auth import LoginRequest, ProfileUpdateRequest, RegisterRequest
 
 
 class AuthError(Exception):
@@ -70,3 +70,32 @@ class AuthService:
 
     def get_tenant(self, tenant_id: UUID) -> Tenant | None:
         return self.db.get(Tenant, tenant_id)
+
+    def update_profile(self, user: User, tenant: Tenant, payload: ProfileUpdateRequest) -> None:
+        new_email = payload.email.lower() if payload.email else user.email
+        protected_change = new_email != user.email or payload.new_password is not None
+        if protected_change and (
+            not payload.current_password
+            or not verify_password(payload.current_password, user.hashed_password)
+        ):
+            raise AuthError("Current password is incorrect", status_code=401)
+
+        if new_email != user.email:
+            existing = self.db.scalar(select(User).where(User.email == new_email, User.id != user.id))
+            if existing:
+                raise AuthError("Email already registered", status_code=409)
+            user.email = new_email
+        if payload.full_name is not None:
+            user.full_name = payload.full_name.strip()
+        if payload.tenant_name is not None:
+            tenant.name = payload.tenant_name.strip()
+        if payload.new_password is not None:
+            user.hashed_password = hash_password(payload.new_password)
+
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise AuthError("Email already registered", status_code=409) from exc
+        self.db.refresh(user)
+        self.db.refresh(tenant)

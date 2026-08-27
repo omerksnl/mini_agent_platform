@@ -112,6 +112,70 @@ def test_authentication_errors(client: TestClient) -> None:
     ).status_code == 401
 
 
+def test_profile_identity_update(client: TestClient) -> None:
+    token = register(client)
+
+    response = client.patch(
+        "/api/auth/profile",
+        headers=auth_headers(token),
+        json={
+            "full_name": "Updated User",
+            "email": "updated@example.com",
+            "tenant_name": "Updated Tenant",
+            "current_password": "test-password",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["full_name"] == "Updated User"
+    assert response.json()["user"]["email"] == "updated@example.com"
+    assert response.json()["tenant_name"] == "Updated Tenant"
+
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "user@example.com", "password": "test-password"},
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "updated@example.com", "password": "test-password"},
+    ).status_code == 200
+
+
+def test_profile_protected_changes_require_current_password(client: TestClient) -> None:
+    token = register(client)
+    headers = auth_headers(token)
+
+    missing_password = client.patch(
+        "/api/auth/profile",
+        headers=headers,
+        json={"email": "protected@example.com"},
+    )
+    assert missing_password.status_code == 401
+
+    wrong_password = client.patch(
+        "/api/auth/profile",
+        headers=headers,
+        json={"current_password": "wrong-password", "new_password": "new-password"},
+    )
+    assert wrong_password.status_code == 401
+
+    changed = client.patch(
+        "/api/auth/profile",
+        headers=headers,
+        json={"current_password": "test-password", "new_password": "new-password"},
+    )
+    assert changed.status_code == 200
+
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "user@example.com", "password": "test-password"},
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "user@example.com", "password": "new-password"},
+    ).status_code == 200
+
+
 def test_agent_crud_and_validation(client: TestClient) -> None:
     token = register(client)
     agent = create_agent(client, token)
@@ -124,15 +188,28 @@ def test_agent_crud_and_validation(client: TestClient) -> None:
     fetched = client.get(f"/api/agents/{agent_id}", headers=auth_headers(token))
     assert fetched.status_code == 200
     assert fetched.json()["name"] == "Test Agent"
+    assert fetched.json()["collection_search_limit"] == 5
 
     updated = client.patch(
         f"/api/agents/{agent_id}",
         headers=auth_headers(token),
-        json={"name": "Updated Agent", "temperature": 1.2},
+        json={
+            "name": "Updated Agent",
+            "temperature": 1.2,
+            "collection_search_limit": 3,
+        },
     )
     assert updated.status_code == 200
     assert updated.json()["name"] == "Updated Agent"
     assert updated.json()["temperature"] == 1.2
+    assert updated.json()["collection_search_limit"] == 3
+
+    invalid_collection_limit = client.patch(
+        f"/api/agents/{agent_id}",
+        headers=auth_headers(token),
+        json={"collection_search_limit": 0},
+    )
+    assert invalid_collection_limit.status_code == 422
 
     null_update = client.patch(
         f"/api/agents/{agent_id}",

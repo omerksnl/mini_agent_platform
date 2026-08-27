@@ -19,12 +19,14 @@ export type Agent = {
   system_prompt: string;
   model: string;
   temperature: number;
+  collection_search_limit: number;
   a2a_enabled: boolean;
   a2a_description: string;
   system_tools: string[];
   tool_ids: string[];
   skill_ids: string[];
   collection_ids: string[];
+  guardrail_ids: string[];
   managed_agent_ids: string[];
   router_target_ids: string[];
   managed_remote_agent_ids: string[];
@@ -41,10 +43,12 @@ export type AgentInput = {
   system_prompt: string;
   model: string;
   temperature: number;
+  collection_search_limit: number;
   system_tools: string[];
   tool_ids: string[];
   skill_ids: string[];
   collection_ids: string[];
+  guardrail_ids: string[];
   managed_agent_ids: string[];
   router_target_ids: string[];
   managed_remote_agent_ids: string[];
@@ -70,6 +74,23 @@ export type SkillInput = Pick<
   Skill,
   "name" | "description" | "instructions" | "output_schema" | "required_system_tools" | "required_tool_ids" | "is_active"
 >;
+
+export type Guardrail = {
+  id: string; tenant_id: string; name: string;
+  guardrail_type: "pii_redaction" | "blocked_terms" | "required_output_fields";
+  stages: Array<"input" | "tool_input" | "tool_output" | "output">;
+  action: "warn" | "redact" | "block";
+  config: Record<string, unknown>; is_active: boolean; created_at: string; updated_at: string;
+};
+
+export type ProfileUpdate = {
+  full_name?: string;
+  email?: string;
+  tenant_name?: string;
+  current_password?: string;
+  new_password?: string;
+};
+export type GuardrailInput = Pick<Guardrail, "name" | "guardrail_type" | "stages" | "action" | "config" | "is_active">;
 
 export type ToolParameter = {
   name: string;
@@ -319,6 +340,9 @@ export const api = {
   me() {
     return request<MeResponse>("/api/auth/me");
   },
+  updateProfile(body: ProfileUpdate) {
+    return request<MeResponse>("/api/auth/profile", { method: "PATCH", body: JSON.stringify(body) });
+  },
   listAgents() {
     return request<Agent[]>("/api/agents");
   },
@@ -474,6 +498,10 @@ export const api = {
   createWorkflow(body: WorkflowInput) {
     return request<Workflow>("/api/workflows", { method: "POST", body: JSON.stringify(body) });
   },
+  listGuardrails() { return request<Guardrail[]>("/api/guardrails"); },
+  createGuardrail(body: GuardrailInput) { return request<Guardrail>("/api/guardrails", { method: "POST", body: JSON.stringify(body) }); },
+  updateGuardrail(id: string, body: GuardrailInput) { return request<Guardrail>(`/api/guardrails/${id}`, { method: "PUT", body: JSON.stringify(body) }); },
+  deleteGuardrail(id: string) { return request<void>(`/api/guardrails/${id}`, { method: "DELETE" }); },
   updateWorkflow(id: string, body: Partial<WorkflowInput>) {
     return request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   },

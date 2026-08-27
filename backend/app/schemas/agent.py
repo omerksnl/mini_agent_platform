@@ -12,10 +12,12 @@ class AgentCreate(BaseModel):
     system_prompt: str = ""
     model: str = Field(default="anthropic/claude-haiku-4.5", min_length=1, max_length=128)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    collection_search_limit: int = Field(default=5, ge=1, le=20)
     system_tools: list[str] = Field(default_factory=lambda: ["calculator", "current_datetime"])
     tool_ids: list[UUID] = Field(default_factory=list)
     skill_ids: list[UUID] = Field(default_factory=list)
     collection_ids: list[UUID] = Field(default_factory=list)
+    guardrail_ids: list[UUID] = Field(default_factory=list)
     managed_agent_ids: list[UUID] = Field(default_factory=list)
     router_target_ids: list[UUID] = Field(default_factory=list)
     managed_remote_agent_ids: list[UUID] = Field(default_factory=list)
@@ -29,10 +31,12 @@ class AgentUpdate(BaseModel):
     system_prompt: str | None = None
     model: str | None = Field(default=None, min_length=1, max_length=128)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    collection_search_limit: int | None = Field(default=None, ge=1, le=20)
     system_tools: list[str] | None = None
     tool_ids: list[UUID] | None = None
     skill_ids: list[UUID] | None = None
     collection_ids: list[UUID] | None = None
+    guardrail_ids: list[UUID] | None = None
     managed_agent_ids: list[UUID] | None = None
     router_target_ids: list[UUID] | None = None
     managed_remote_agent_ids: list[UUID] | None = None
@@ -63,12 +67,14 @@ class AgentResponse(BaseModel):
     system_prompt: str
     model: str
     temperature: float
+    collection_search_limit: int
     a2a_enabled: bool
     a2a_description: str
     system_tools: list[str]
     tool_ids: list[UUID]
     skill_ids: list[UUID]
     collection_ids: list[UUID]
+    guardrail_ids: list[UUID]
     managed_agent_ids: list[UUID]
     router_target_ids: list[UUID]
     managed_remote_agent_ids: list[UUID]

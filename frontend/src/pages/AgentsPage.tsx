@@ -3,11 +3,12 @@ import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { api, type Agent, type AgentInput, type AgentProviderAssignment, type Collection, type HttpTool, type ProviderCredential, type RemoteAgent, type Skill } from "../api";
+import { api, type Agent, type AgentInput, type AgentProviderAssignment, type Collection, type Guardrail, type HttpTool, type ProviderCredential, type RemoteAgent, type Skill } from "../api";
 import { DEFAULT_MODEL, MODEL_OPTIONS } from "../modelOptions";
 import { PromptVersionHistory } from "../components/PromptVersionHistory";
 import { A2APublishing } from "../components/A2APublishing";
 import { AppHeader } from "../components/AppHeader";
+import { SingleAgentWorkspaceHeader } from "../components/SingleAgentWorkspaceHeader";
 
 const emptyForm: AgentInput = {
   name: "",
@@ -15,10 +16,12 @@ const emptyForm: AgentInput = {
   system_prompt: "You are a helpful assistant.",
   model: DEFAULT_MODEL,
   temperature: 0.7,
+  collection_search_limit: 5,
   system_tools: ["calculator", "current_datetime"],
   tool_ids: [],
   skill_ids: [],
   collection_ids: [],
+  guardrail_ids: [],
   managed_agent_ids: [],
   router_target_ids: [],
   managed_remote_agent_ids: [],
@@ -36,6 +39,7 @@ export function AgentsPage() {
   const [tools, setTools] = useState<HttpTool[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
   const [providerProfiles, setProviderProfiles] = useState<ProviderCredential[]>([]);
   const [providerAssignments, setProviderAssignments] = useState<AgentProviderAssignment[]>([]);
   const [selectedProviderProfile, setSelectedProviderProfile] = useState("");
@@ -63,11 +67,12 @@ export function AgentsPage() {
     setLoading(true);
     setError("");
     try {
-      const [agentList, toolList, skillList, collectionList, remoteList, profileList, assignmentList] = await Promise.all([api.listAgents(), api.listTools(), api.listSkills(), api.listCollections(), api.listRemoteAgents(), api.listProviderCredentials(), api.listAgentProviderAssignments()]);
+      const [agentList, toolList, skillList, collectionList, guardrailList, remoteList, profileList, assignmentList] = await Promise.all([api.listAgents(), api.listTools(), api.listSkills(), api.listCollections(), api.listGuardrails(), api.listRemoteAgents(), api.listProviderCredentials(), api.listAgentProviderAssignments()]);
       setAgents(agentList);
       setTools(toolList);
       setSkills(skillList);
       setCollections(collectionList);
+      setGuardrails(guardrailList);
       setRemoteAgents(remoteList);
       setProviderProfiles(profileList);
       setProviderAssignments(assignmentList);
@@ -116,10 +121,12 @@ export function AgentsPage() {
       system_prompt: agent.system_prompt,
       model: agent.model,
       temperature: agent.temperature,
+      collection_search_limit: agent.collection_search_limit,
       system_tools: agent.system_tools,
       tool_ids: agent.tool_ids,
       skill_ids: agent.skill_ids,
       collection_ids: agent.collection_ids,
+      guardrail_ids: agent.guardrail_ids,
       managed_agent_ids: agent.managed_agent_ids,
       router_target_ids: agent.router_target_ids,
       managed_remote_agent_ids: agent.managed_remote_agent_ids,
@@ -261,6 +268,7 @@ export function AgentsPage() {
   return (
     <div className="app-shell">
       <AppHeader />
+      <SingleAgentWorkspaceHeader />
 
       <main className="layout">
         <section className="box panel">
@@ -398,6 +406,22 @@ export function AgentsPage() {
                   />
                 </label>
                 <label>
+                  Collection search results
+                  <span className="field-hint">
+                    Maximum collection chunks supplied to this agent per search.
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={form.collection_search_limit}
+                    onChange={(event) => setForm({
+                      ...form,
+                      collection_search_limit: Number(event.target.value),
+                    })}
+                  />
+                </label>
+                <label>
                   System prompt
                   <textarea
                     rows={10}
@@ -410,7 +434,7 @@ export function AgentsPage() {
                   void loadAgents();
                 }} /></div></details> : null}
                 {editingAgent ? <details className="agent-config-section"><summary><span>A2A publishing</span><small>Expose this agent securely to other platforms</small></summary><div className="agent-config-content"><A2APublishing agent={editingAgent} onChanged={loadAgents} /></div></details> : null}
-                <details className="agent-config-section"><summary><span>Capabilities & knowledge</span><small>{form.system_tools.length + form.tool_ids.length} tools · {form.remote_agent_ids.length} A2A · {form.skill_ids.length} skills · {form.collection_ids.length} collections</small></summary><div className="agent-config-content capability-config-grid">
+                <details className="agent-config-section"><summary><span>Capabilities, knowledge & safety</span><small>{form.system_tools.length + form.tool_ids.length} tools · {form.skill_ids.length} skills · {form.collection_ids.length} collections · {form.guardrail_ids.length} guardrails</small></summary><div className="agent-config-content capability-config-grid">
                 <fieldset className="tool-picker">
                   <legend>Tools</legend>
                   <span className="field-hint">The agent can only call selected tools.</span>
@@ -493,6 +517,17 @@ export function AgentsPage() {
                     </label>
                   ))}
                   {skills.length === 0 ? <Link className="field-hint" to="/skills">Create a skill</Link> : null}
+                </fieldset>
+                <fieldset className="tool-picker">
+                  <legend>Guardrails</legend>
+                  <span className="field-hint">Policies run locally before or after the model call.</span>
+                  {guardrails.filter((item) => item.is_active || form.guardrail_ids.includes(item.id)).map((item) => (
+                    <label className="tool-option" key={item.id}>
+                      <input type="checkbox" checked={form.guardrail_ids.includes(item.id)} disabled={!item.is_active} onChange={(event) => setForm({ ...form, guardrail_ids: event.target.checked ? [...form.guardrail_ids, item.id] : form.guardrail_ids.filter((id) => id !== item.id) })} />
+                      <span><strong>{item.name}</strong><small>{item.guardrail_type.replaceAll("_", " ")} · {item.stages.join(", ")}{item.is_active ? "" : " (inactive)"}</small></span>
+                    </label>
+                  ))}
+                  {guardrails.length === 0 ? <Link className="field-hint" to="/guardrails">Create a guardrail</Link> : null}
                 </fieldset>
                 </div></details>
                 <button

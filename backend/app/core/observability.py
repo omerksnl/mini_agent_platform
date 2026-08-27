@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterator
 from uuid import UUID, uuid5, NAMESPACE_URL
 
@@ -10,6 +11,7 @@ from app.config import Settings
 
 logger = logging.getLogger(__name__)
 _trace_context: ContextVar[dict[str, str]] = ContextVar("langfuse_trace_context", default={})
+_event_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="langfuse-events")
 
 
 @contextmanager
@@ -77,6 +79,36 @@ def langfuse_metadata(*, agent_name: str, agent_type: str) -> dict[str, Any]:
     if step_key := context.get("step_key"):
         metadata["workflow_step_key"] = step_key
     return metadata
+
+
+def emit_guardrail_event(metadata: dict[str, Any]) -> None:
+    """Send a sanitized guardrail event without delaying the user response."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.langfuse_enabled:
+        return
+    context = dict(_trace_context.get())
+    safe_metadata = {**metadata, **context}
+
+    def submit() -> None:
+        try:
+            client = _langfuse_client(
+                settings.langfuse_public_key,
+                settings.langfuse_secret_key,
+                settings.langfuse_base_url,
+                settings.langfuse_tracing_environment,
+            )
+            if hasattr(client, "create_event"):
+                client.create_event(name="guardrail.check", metadata=safe_metadata)
+            elif hasattr(client, "start_observation"):
+                observation = client.start_observation(name="guardrail.check", as_type="event", metadata=safe_metadata)
+                observation.end()
+            client.flush()
+        except Exception:
+            logger.exception("Langfuse guardrail event failed; continuing without remote event")
+
+    _event_executor.submit(submit)
 
 
 def submit_human_feedback(

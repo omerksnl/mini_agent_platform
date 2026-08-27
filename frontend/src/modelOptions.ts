@@ -26,6 +26,11 @@ export const MODEL_OPTIONS: ModelOption[] = [
     provider: "OpenAI",
   },
   {
+    id: "gpt-4.1-nano",
+    label: "GPT-4.1 nano",
+    provider: "OpenAI",
+  },
+  {
     id: "gpt-4.1",
     label: "GPT-4.1",
     provider: "OpenAI",

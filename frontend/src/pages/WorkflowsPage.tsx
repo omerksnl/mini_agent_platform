@@ -14,8 +14,8 @@ type StepForm = { step_key: string; name: string; step_type: WorkflowStepType; t
 type Form = { name: string; description: string; is_active: boolean; steps: StepForm[] };
 type ExecutionMode = "workflow" | "router" | "supervisor";
 const blank: Form = { name: "", description: "", is_active: true, steps: [] };
-const blankSupervisor: AgentInput = { name: "", agent_type: "supervisor", system_prompt: "You coordinate managed agents and delegate each task to the appropriate specialist.", model: DEFAULT_MODEL, temperature: 0.2, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: [], managed_remote_agent_ids: [], router_remote_agent_ids: [], remote_agent_ids: [] };
-const blankRouter: AgentInput = { name: "", agent_type: "router", system_prompt: "Route each request to exactly one suitable specialist. Ask one short clarification question only when the request is genuinely ambiguous.", model: DEFAULT_MODEL, temperature: 0.1, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: [], managed_remote_agent_ids: [], router_remote_agent_ids: [], remote_agent_ids: [] };
+const blankSupervisor: AgentInput = { name: "", agent_type: "supervisor", system_prompt: "You coordinate managed agents and delegate each task to the appropriate specialist.", model: DEFAULT_MODEL, temperature: 0.2, collection_search_limit: 5, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], guardrail_ids: [], managed_agent_ids: [], router_target_ids: [], managed_remote_agent_ids: [], router_remote_agent_ids: [], remote_agent_ids: [] };
+const blankRouter: AgentInput = { name: "", agent_type: "router", system_prompt: "Route each request to exactly one suitable specialist. Ask one short clarification question only when the request is genuinely ambiguous.", model: DEFAULT_MODEL, temperature: 0.1, collection_search_limit: 5, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], guardrail_ids: [], managed_agent_ids: [], router_target_ids: [], managed_remote_agent_ids: [], router_remote_agent_ids: [], remote_agent_ids: [] };
 
 function readableLabel(value: string): string {
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -160,7 +160,7 @@ export function WorkflowsPage() {
       const supervisor = agents.find((item) => item.id === searchParams.get("edit") && item.agent_type === "supervisor");
       if (supervisor) {
         setEditingSupervisorId(supervisor.id); setShowSupervisorForm(true);
-        setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
+        setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, collection_search_limit: supervisor.collection_search_limit, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, guardrail_ids: supervisor.guardrail_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
         setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === supervisor.id)?.credential_id ?? "");
       }
     } else if (mode === "router") {
@@ -293,7 +293,7 @@ export function WorkflowsPage() {
   }
   function openSupervisorEditor(supervisor: Agent) {
     setEditingSupervisorId(supervisor.id); setShowSupervisorForm(true);
-    setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
+    setSupervisorForm({ name: supervisor.name, agent_type: "supervisor", system_prompt: supervisor.system_prompt, model: supervisor.model, temperature: supervisor.temperature, collection_search_limit: supervisor.collection_search_limit, system_tools: supervisor.system_tools, tool_ids: supervisor.tool_ids, skill_ids: supervisor.skill_ids, collection_ids: supervisor.collection_ids, guardrail_ids: supervisor.guardrail_ids, managed_agent_ids: supervisor.managed_agent_ids, router_target_ids: [], managed_remote_agent_ids: supervisor.managed_remote_agent_ids, router_remote_agent_ids: [], remote_agent_ids: [] });
     setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === supervisor.id)?.credential_id ?? "");
     setSearchParams({ mode: "supervisor", edit: supervisor.id });
   }
@@ -308,7 +308,7 @@ export function WorkflowsPage() {
   }
   function openRouterEditor(router: Agent) {
     setEditingRouterId(router.id); setShowRouterForm(true);
-    setRouterForm({ name: router.name, agent_type: "router", system_prompt: router.system_prompt, model: router.model, temperature: router.temperature, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], managed_agent_ids: [], router_target_ids: router.router_target_ids, managed_remote_agent_ids: [], router_remote_agent_ids: router.router_remote_agent_ids, remote_agent_ids: [] });
+    setRouterForm({ name: router.name, agent_type: "router", system_prompt: router.system_prompt, model: router.model, temperature: router.temperature, collection_search_limit: router.collection_search_limit, system_tools: [], tool_ids: [], skill_ids: [], collection_ids: [], guardrail_ids: router.guardrail_ids, managed_agent_ids: [], router_target_ids: router.router_target_ids, managed_remote_agent_ids: [], router_remote_agent_ids: router.router_remote_agent_ids, remote_agent_ids: [] });
     setSelectedProviderProfile(providerAssignments.find((item) => item.agent_id === router.id)?.credential_id ?? "");
     setSearchParams({ mode: "router", edit: router.id });
   }

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { api, type HttpTool, type Skill, type SkillInput } from "../api";
 import { AppHeader } from "../components/AppHeader";
+import { SingleAgentWorkspaceHeader } from "../components/SingleAgentWorkspaceHeader";
 
 type SkillForm = Omit<SkillInput, "output_schema"> & { outputSchemaText: string };
 type PanelMode = "idle" | "create" | "edit";
@@ -120,6 +121,7 @@ export function SkillsPage() {
   return (
     <div className="app-shell">
       <AppHeader />
+      <SingleAgentWorkspaceHeader />
       <main className="layout">
         <section className="box panel">
           <div className="panel-head"><h1>Skills</h1><button className="btn btn-primary" onClick={startCreate}>New skill</button></div>
