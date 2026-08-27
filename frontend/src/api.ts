@@ -115,6 +115,20 @@ export type VisualModelInput = Pick<
   "image_width" | "image_height" | "channels" | "use_pretrained_weights"
 >;
 
+export type VisualDatasetSummary = {
+  visual_model_id: string;
+  total_images: number;
+  total_bytes: number;
+  ready_for_training: boolean;
+  classes: Array<{ class_name: string; image_count: number; total_bytes: number }>;
+};
+
+export type VisualDatasetUploadResult = {
+  added_images: number;
+  skipped_duplicates: number;
+  summary: VisualDatasetSummary;
+};
+
 export type ToolParameter = {
   name: string;
   type: "string" | "integer" | "number" | "boolean";
@@ -529,6 +543,14 @@ export const api = {
   createVisualModel(body: VisualModelInput) { return request<VisualModel>("/api/visual-models", { method: "POST", body: JSON.stringify(body) }); },
   updateVisualModel(id: string, body: VisualModelInput) { return request<VisualModel>(`/api/visual-models/${id}`, { method: "PUT", body: JSON.stringify(body) }); },
   deleteVisualModel(id: string) { return request<void>(`/api/visual-models/${id}`, { method: "DELETE" }); },
+  getVisualDataset(id: string) { return request<VisualDatasetSummary>(`/api/visual-models/${id}/dataset`); },
+  uploadVisualDataset(id: string, files: File[], className: string) {
+    const body = new FormData();
+    files.forEach((file) => body.append("files", file));
+    if (className) body.append("class_name", className);
+    return request<VisualDatasetUploadResult>(`/api/visual-models/${id}/dataset`, { method: "POST", body });
+  },
+  clearVisualDataset(id: string) { return request<void>(`/api/visual-models/${id}/dataset`, { method: "DELETE" }); },
   updateWorkflow(id: string, body: Partial<WorkflowInput>) {
     return request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   },

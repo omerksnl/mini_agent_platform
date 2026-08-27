@@ -17,5 +17,6 @@ langfuse==4.14.4
 tzdata==2025.3
 redis==5.2.1
 pypdf==5.1.0
+Pillow==12.3.0
 reportlab==4.2.5
 pgvector==0.3.6

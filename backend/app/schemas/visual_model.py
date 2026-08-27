@@ -49,6 +49,26 @@ class VisualModelResponse(VisualModelCreate):
 
     id: UUID
     tenant_id: UUID
-    status: Literal["draft"]
+    status: Literal["draft", "dataset_ready"]
     created_at: datetime
     updated_at: datetime
+
+
+class VisualDatasetClassSummary(BaseModel):
+    class_name: str
+    image_count: int
+    total_bytes: int
+
+
+class VisualDatasetSummary(BaseModel):
+    visual_model_id: UUID
+    total_images: int
+    total_bytes: int
+    ready_for_training: bool
+    classes: list[VisualDatasetClassSummary]
+
+
+class VisualDatasetUploadResponse(BaseModel):
+    added_images: int
+    skipped_duplicates: int
+    summary: VisualDatasetSummary

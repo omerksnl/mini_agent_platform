@@ -101,6 +101,9 @@ class Tenant(Base):
     workflows: Mapped[list["Workflow"]] = relationship(back_populates="tenant")
     remote_agents: Mapped[list["RemoteAgent"]] = relationship(back_populates="tenant")
     visual_models: Mapped[list["VisualModel"]] = relationship(back_populates="tenant")
+    visual_dataset_images: Mapped[list["VisualDatasetImage"]] = relationship(
+        back_populates="tenant"
+    )
 
 
 class User(Base):
@@ -210,6 +213,36 @@ class VisualModel(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="visual_models")
+    dataset_images: Mapped[list["VisualDatasetImage"]] = relationship(
+        back_populates="visual_model", cascade="all, delete-orphan"
+    )
+
+
+class VisualDatasetImage(Base):
+    __tablename__ = "visual_dataset_images"
+    __table_args__ = (
+        UniqueConstraint("visual_model_id", "sha256", name="uq_visual_dataset_model_sha256"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    visual_model_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("visual_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    class_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    tenant: Mapped[Tenant] = relationship(back_populates="visual_dataset_images")
+    visual_model: Mapped[VisualModel] = relationship(back_populates="dataset_images")
 
 
 class Agent(Base):

@@ -2290,12 +2290,37 @@ input[type="range"] {
 .visual-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .visual-model-form label { display: grid; gap: 6px; }
 .visual-model-form label > small { color: var(--muted); font-size: .62rem; }
+.visual-config-section { background: #fafafa; }
+.visual-config-content { display: grid; gap: 14px; }
+.visual-config-content .vision-architecture-picker { margin-top: 12px; }
+.visual-dataset-details { margin-top: 15px; }
+.visual-dataset-details .agent-config-content { padding-bottom: 16px; }
+.visual-dataset-details .visual-dataset-section { margin-top: 0; padding-top: 12px; border-top: 0; }
 .vision-architecture-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
 .vision-architecture-picker legend { padding: 0 6px; font-weight: 700; }
-.vision-architecture-picker label { position: relative; display: grid; gap: 6px; min-height: 95px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: #f5f5f5; cursor: pointer; }
+.vision-architecture-picker label { position: relative; display: grid; gap: 6px; min-height: 82px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: #f5f5f5; cursor: pointer; }
 .vision-architecture-picker label.selected { border-color: var(--primary); background: #fff5f5; box-shadow: inset 3px 0 var(--primary); }
 .vision-architecture-picker input { position: absolute; opacity: 0; pointer-events: none; }
 .vision-architecture-picker small { color: var(--muted); line-height: 1.45; }
 .visual-input-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.visual-dataset-section { display: grid; gap: 15px; margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--line); }
+.visual-dataset-section h2 { margin: 0; color: var(--primary); font-size: 1rem; }
+.dataset-ready-badge { padding: 5px 10px; border: 1px solid #d9aa63; border-radius: 999px; color: #a06418; background: #fff8ec; font-size: .62rem; }
+.dataset-ready-badge.ready { border-color: #8ec8aa; color: #28764f; background: #eff9f3; }
+.dataset-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.dataset-totals > div { display: grid; gap: 3px; padding: 13px; border: 1px solid var(--line); border-radius: 7px; background: #f7f7f7; }
+.dataset-totals strong { color: var(--text-dark); font-size: 1.05rem; }
+.dataset-totals span { color: var(--muted); font-size: .62rem; }
+.dataset-class-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; }
+.dataset-class-grid > div { display: grid; gap: 3px; padding: 11px; border: 1px solid var(--line); border-left: 3px solid #c6c6c6; border-radius: 7px; background: #fafafa; }
+.dataset-class-grid > div.populated { border-left-color: #49a878; background: #f3faf6; }
+.dataset-class-grid strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dataset-class-grid span, .dataset-class-grid small { color: var(--muted); font-size: .6rem; }
+.dataset-upload-box { display: grid; gap: 12px; padding: 15px; border: 1px dashed #bcc8d4; border-radius: 8px; background: #f8fafc; }
+.dataset-upload-box input[type="file"] { padding: 8px; background: #fff; }
+.dataset-upload-help { margin: 0; font-size: .64rem; }
+.dataset-upload-help code { padding: 2px 4px; border-radius: 3px; background: #e9edf2; }
+.dataset-selection { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 11px; border-radius: 6px; color: #496783; background: #edf3f8; font-size: .64rem; }
+.dataset-selection button { border: 0; color: var(--primary); background: transparent; cursor: pointer; }
 @media (max-width: 980px) { .visual-model-layout { grid-template-columns: 1fr; } .visual-model-list, .visual-model-editor { min-height: 0; } }
-@media (max-width: 650px) { .visual-form-grid, .visual-input-grid, .vision-architecture-picker { grid-template-columns: 1fr; } }
+@media (max-width: 650px) { .visual-form-grid, .visual-input-grid, .vision-architecture-picker, .dataset-totals { grid-template-columns: 1fr; } }

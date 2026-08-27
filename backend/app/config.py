@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     http_tool_max_response_bytes: int = 1_000_000
     upload_directory: str = "uploads"
     attachment_max_bytes: int = 10_000_000
+    visual_dataset_image_max_bytes: int = 10_000_000
+    visual_dataset_upload_max_bytes: int = 200_000_000
+    visual_dataset_max_files_per_upload: int = 5000
     pdf_max_pages: int = 50
     pdf_max_text_characters: int = 120_000
     generated_file_max_bytes: int = 10_000_000
