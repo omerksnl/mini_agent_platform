@@ -2267,3 +2267,35 @@ input[type="range"] {
 .saved-provider-list small { color: #aaa; font-family: monospace; }
 .success-note { color: #267650; background: #edf8f2; border: 1px solid #9ed5b8; border-radius: 5px; padding: 12px; }
 @media (max-width: 700px) { .provider-status { grid-template-columns: 1fr; } }
+
+/* Visual model configuration workspace */
+.visual-model-layout { grid-template-columns: minmax(310px, .72fr) minmax(560px, 1.45fr); align-items: start; }
+.visual-model-list, .visual-model-editor { min-height: 640px; }
+.visual-feature-note { display: grid; gap: 3px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid #d8e1eb; border-left: 3px solid #6681a3; border-radius: 7px; background: #f5f8fb; }
+.visual-feature-note strong { color: #496783; font-size: .75rem; }
+.visual-feature-note span { color: var(--muted); font-size: .66rem; }
+.visual-model-row { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 8px; margin-bottom: 9px; }
+.visual-model-main { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; padding: 13px; border: 1px solid var(--line); border-left: 3px solid #6681a3; border-radius: 7px; color: var(--text-dark); background: #f4f4f4; text-align: left; cursor: pointer; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.visual-model-main:hover, .visual-model-row.selected .visual-model-main { border-color: var(--primary); background: #fff7f7; transform: translateY(-1px); }
+.visual-model-main > span:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
+.visual-model-main strong { overflow: hidden; color: var(--primary); text-overflow: ellipsis; white-space: nowrap; }
+.visual-model-main small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.visual-model-main b, .vision-status-badge { padding: 3px 8px; border: 1px solid #b8c8da; border-radius: 999px; color: #496783; background: #f3f7fb; font-size: .56rem; font-weight: 500; text-transform: capitalize; }
+.vision-model-icon { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid #b8c8da; border-radius: 8px; color: #6681a3; background: #fff; }
+.visual-delete-button { border: 1px solid #efb1b3; border-radius: 7px; color: var(--primary); background: #fff; font-size: 1rem; cursor: pointer; transition: color .18s ease, background .18s ease; }
+.visual-delete-button:hover { color: #fff; background: var(--primary); }
+.visual-model-editor .panel-accent { margin: -20px -20px 18px; padding: 18px 20px; border-radius: 7px 7px 0 0; color: #fff; background: var(--primary); }
+.visual-model-editor .panel-accent h1, .visual-model-editor .panel-accent p { color: #fff; }
+.visual-model-editor .panel-accent .vision-status-badge { border-color: rgba(255,255,255,.7); color: #fff; background: rgba(255,255,255,.12); }
+.visual-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.visual-model-form label { display: grid; gap: 6px; }
+.visual-model-form label > small { color: var(--muted); font-size: .62rem; }
+.vision-architecture-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
+.vision-architecture-picker legend { padding: 0 6px; font-weight: 700; }
+.vision-architecture-picker label { position: relative; display: grid; gap: 6px; min-height: 95px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: #f5f5f5; cursor: pointer; }
+.vision-architecture-picker label.selected { border-color: var(--primary); background: #fff5f5; box-shadow: inset 3px 0 var(--primary); }
+.vision-architecture-picker input { position: absolute; opacity: 0; pointer-events: none; }
+.vision-architecture-picker small { color: var(--muted); line-height: 1.45; }
+.visual-input-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+@media (max-width: 980px) { .visual-model-layout { grid-template-columns: 1fr; } .visual-model-list, .visual-model-editor { min-height: 0; } }
+@media (max-width: 650px) { .visual-form-grid, .visual-input-grid, .vision-architecture-picker { grid-template-columns: 1fr; } }

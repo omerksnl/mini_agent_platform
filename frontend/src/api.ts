@@ -92,6 +92,29 @@ export type ProfileUpdate = {
 };
 export type GuardrailInput = Pick<Guardrail, "name" | "guardrail_type" | "stages" | "action" | "config" | "is_active">;
 
+export type VisualModel = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string;
+  task_type: "image_classification";
+  architecture: "simple_cnn" | "mobilenet_v2" | "resnet50";
+  class_names: string[];
+  image_width: number;
+  image_height: number;
+  channels: 1 | 3;
+  use_pretrained_weights: boolean;
+  status: "draft";
+  created_at: string;
+  updated_at: string;
+};
+
+export type VisualModelInput = Pick<
+  VisualModel,
+  "name" | "description" | "task_type" | "architecture" | "class_names" |
+  "image_width" | "image_height" | "channels" | "use_pretrained_weights"
+>;
+
 export type ToolParameter = {
   name: string;
   type: "string" | "integer" | "number" | "boolean";
@@ -502,6 +525,10 @@ export const api = {
   createGuardrail(body: GuardrailInput) { return request<Guardrail>("/api/guardrails", { method: "POST", body: JSON.stringify(body) }); },
   updateGuardrail(id: string, body: GuardrailInput) { return request<Guardrail>(`/api/guardrails/${id}`, { method: "PUT", body: JSON.stringify(body) }); },
   deleteGuardrail(id: string) { return request<void>(`/api/guardrails/${id}`, { method: "DELETE" }); },
+  listVisualModels() { return request<VisualModel[]>("/api/visual-models"); },
+  createVisualModel(body: VisualModelInput) { return request<VisualModel>("/api/visual-models", { method: "POST", body: JSON.stringify(body) }); },
+  updateVisualModel(id: string, body: VisualModelInput) { return request<VisualModel>(`/api/visual-models/${id}`, { method: "PUT", body: JSON.stringify(body) }); },
+  deleteVisualModel(id: string) { return request<void>(`/api/visual-models/${id}`, { method: "DELETE" }); },
   updateWorkflow(id: string, body: Partial<WorkflowInput>) {
     return request<Workflow>(`/api/workflows/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   },

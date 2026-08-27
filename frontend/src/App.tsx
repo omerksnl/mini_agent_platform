@@ -15,6 +15,7 @@ import { ProviderSettingsPage } from "./pages/ProviderSettingsPage";
 import { GuardrailsPage } from "./pages/GuardrailsPage";
 import { HomePage } from "./pages/HomePage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { VisualModelsPage } from "./pages/VisualModelsPage";
 import { useGlobalInputUndo } from "./useGlobalInputUndo";
 
 export default function App() {
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/providers" element={<ProviderSettingsPage />} />
             <Route path="/settings/provider" element={<Navigate to="/providers" replace />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/visual-models" element={<VisualModelsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

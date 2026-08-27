@@ -8,6 +8,7 @@ const titles: Record<string, string> = {
   "/multi-agent": "Multi-agent", "/workflows": "Workflows", "/chat": "Chat",
   "/providers": "AI providers",
   "/profile": "Profile",
+  "/visual-models": "Visual models",
 };
 
 export function AppHeader() {

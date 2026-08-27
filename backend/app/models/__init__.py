@@ -100,6 +100,7 @@ class Tenant(Base):
     collections: Mapped[list["Collection"]] = relationship(back_populates="tenant")
     workflows: Mapped[list["Workflow"]] = relationship(back_populates="tenant")
     remote_agents: Mapped[list["RemoteAgent"]] = relationship(back_populates="tenant")
+    visual_models: Mapped[list["VisualModel"]] = relationship(back_populates="tenant")
 
 
 class User(Base):
@@ -183,6 +184,32 @@ class Guardrail(Base):
     agents: Mapped[list["Agent"]] = relationship(
         secondary=agent_guardrails, back_populates="guardrails"
     )
+
+
+class VisualModel(Base):
+    __tablename__ = "visual_models"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_visual_models_tenant_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    task_type: Mapped[str] = mapped_column(String(40), nullable=False, default="image_classification")
+    architecture: Mapped[str] = mapped_column(String(40), nullable=False)
+    class_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    image_width: Mapped[int] = mapped_column(Integer, nullable=False, default=224)
+    image_height: Mapped[int] = mapped_column(Integer, nullable=False, default=224)
+    channels: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    use_pretrained_weights: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="visual_models")
 
 
 class Agent(Base):

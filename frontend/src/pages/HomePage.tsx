@@ -11,6 +11,7 @@ const cards = [
   { to: "/workflows", title: "Workflows", description: "Automate repeatable tasks and processes", icon: "flow" },
   { to: "/chat", title: "Chat", description: "Start a conversation with your agents", icon: "chat" },
   { to: "/providers", title: "AI providers", description: "Manage models, credentials and routing", icon: "cloud" },
+  { to: "/visual-models", title: "Visual models", description: "Configure image recognition models", icon: "vision" },
 ] as const;
 
 function CardIcon({ name }: { name: string }) {
@@ -18,6 +19,7 @@ function CardIcon({ name }: { name: string }) {
   if (name === "flow") return <svg viewBox="0 0 48 48"><rect x="17" y="4" width="14" height="10" rx="2"/><rect x="3" y="34" width="14" height="10" rx="2"/><rect x="31" y="34" width="14" height="10" rx="2"/><path d="M24 14v10M10 34v-8h28v8"/></svg>;
   if (name === "chat") return <svg viewBox="0 0 48 48"><path d="M6 8h36v26H19L9 42v-8H6z"/><circle cx="17" cy="21" r="1"/><circle cx="24" cy="21" r="1"/><circle cx="31" cy="21" r="1"/></svg>;
   if (name === "cloud") return <svg viewBox="0 0 48 48"><path d="M13 37h25a8 8 0 0 0 1-16 13 13 0 0 0-25-3 10 10 0 0 0-1 19z"/></svg>;
+  if (name === "vision") return <svg viewBox="0 0 48 48"><rect x="6" y="10" width="36" height="28" rx="4"/><circle cx="18" cy="21" r="4"/><path d="m9 34 9-8 6 5 6-7 9 10M24 4v6M24 38v6M2 24h4M42 24h4"/></svg>;
   return <svg viewBox="0 0 48 48"><rect x="8" y="13" width="32" height="27" rx="9"/><path d="M24 13V7M20 7h8M8 24H4M44 24h-4"/><circle cx="18" cy="26" r="2"/><circle cx="30" cy="26" r="2"/><path d="M18 33c4 3 8 3 12 0"/></svg>;
 }
 
