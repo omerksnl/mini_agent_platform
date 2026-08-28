@@ -1,175 +1,230 @@
 # Mini Agent Platform
 
-## First-time setup
+<p align="center">
+  <strong>Build, connect, observe, and run AI agents and visual models from one workspace.</strong>
+</p>
 
-Requirements for local development: Python 3.12, Node.js, and Docker Desktop.
-For the fully containerized setup, only Docker Desktop is required.
+<p align="center">
+  <a href="#quick-start"><img alt="Quick start" src="https://img.shields.io/badge/Quick_Start-Docker-e25555?style=for-the-badge&logo=docker&logoColor=white"></a>
+  <a href="#platform-capabilities"><img alt="Features" src="https://img.shields.io/badge/Explore-Features-e25555?style=for-the-badge"></a>
+  <a href="#visual-models-and-gpu-training"><img alt="GPU training" src="https://img.shields.io/badge/Visual_Models-GPU-76b900?style=for-the-badge&logo=nvidia&logoColor=white"></a>
+  <a href="http://localhost:5173"><img alt="Open application" src="https://img.shields.io/badge/Open-App-222222?style=for-the-badge"></a>
+  <a href="http://127.0.0.1:8000/docs"><img alt="API documentation" src="https://img.shields.io/badge/Open-API_Docs-009688?style=for-the-badge&logo=fastapi&logoColor=white"></a>
+</p>
 
-From the project directory:
+Mini Agent Platform is a multi-tenant AI workspace for configuring agents, reusable knowledge, tools, safety controls, multi-agent systems, visual workflows, A2A connections, and trainable image-classification models. It combines React with FastAPI, PostgreSQL, Redis, LangGraph, optional Langfuse tracing, and Docker deployment.
 
-```powershell
-cd backend
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
+> [!IMPORTANT]
+> Keep real API keys in `backend/.env`. Never commit that file or paste secrets into issues, screenshots, or documentation.
+
+## Navigation
+
+| Workspace | Purpose | Local link |
+|---|---|---|
+| Home | Platform overview and recent resources | [Open Home](http://localhost:5173/) |
+| Single-agent | Agents, tools, skills, collections, and guardrails | [Open Agents](http://localhost:5173/agents) |
+| Multi-agent | Routers and supervisors | [Open Multi-agent](http://localhost:5173/multi-agent) |
+| Workflows | Visual workflow editor and execution monitoring | [Open Workflows](http://localhost:5173/workflows) |
+| Chat | Persistent conversations with local and remote agents | [Open Chat](http://localhost:5173/chat) |
+| Visual models | Configure, train, and run image classifiers | [Open Visual Models](http://localhost:5173/visual-models) |
+| AI providers | Platform and personal OpenRouter/OpenAI credentials | [Open Providers](http://localhost:5173/providers) |
+| API | Interactive FastAPI documentation | [Open Swagger](http://127.0.0.1:8000/docs) |
+
+These links work after the local stack is running.
+
+## Platform capabilities
+
+### Agent workspace
+
+- Create agents with selectable provider profiles, models, temperature, and system prompts.
+- Keep recent prompt versions, inspect their scores, restore a version, or generate an improved AI draft.
+- Assign system tools, custom HTTP tools, reusable skills, searchable collections, deterministic guardrails, and remote A2A agents.
+- Persist tenant-scoped conversations and provide configurable short-term memory.
+- Display used tools, skills, delegated agents, and API cost alongside responses.
+
+### Knowledge and tools
+
+- Upload documents, chunk their content, create embeddings, and retrieve relevant passages through `collection_search`.
+- Create reusable skills with optional output schemas and required-tool declarations.
+- Create validated `GET` and `POST` HTTP tools with typed parameters.
+- Use safe calculation, current date/time, PDF text extraction, and registered-template PDF generation.
+- Protect HTTP execution with argument validation, blocked private addresses, redirect restrictions, response limits, and timeouts.
+
+### Multi-agent systems
+
+- **Router:** selects exactly one appropriate specialist for each request.
+- **Supervisor:** dynamically coordinates managed agents and passes their results between stages.
+- **A2A:** publishes an agent through an Agent Card and authenticated task endpoint, or connects another account's public agent as a remote capability.
+- Track delegated-agent usage and costs without exposing system prompts or tenant data in Agent Cards.
+
+### Visual workflows
+
+- Drag local agents, remote agents, nested workflows, human waits, and report nodes onto a canvas.
+- Connect nodes with outcome-aware edges and preserve node positions.
+- Execute independent branches in parallel while retaining deterministic dependency handling.
+- Pause for human input, resume the same run, transfer artifacts, and inspect rendered Markdown output.
+- Monitor step and edge state, progress, per-step cost, total cost, and generated reports on the canvas.
+
+### Safety and observability
+
+- Apply deterministic guardrails at user input, tool input, tool output, and agent output stages without another LLM call.
+- Redact configured PII, block disallowed content, and record guardrail decisions.
+- Store token and API-cost data locally from provider usage responses.
+- Optionally send agent, tool, workflow, artifact, cost, and guardrail events to Langfuse.
+- Keep application records tenant-isolated in PostgreSQL.
+
+## Architecture
+
+```text
+React + Nginx
+      |
+      v
+FastAPI API
+  |-- LangChain / LangGraph agent runtime
+  |-- Workflow, router, supervisor, and A2A services
+  |-- RAG, tools, skills, guardrails, PDF, and visual training services
+  |
+  +--> PostgreSQL + pgvector   persistent source of truth and embeddings
+  +--> Redis                   cache and deferred execution support
+  +--> OpenRouter / OpenAI     language-model providers
+  +--> Langfuse (optional)     traces, sessions, scores, and annotations
+  +--> TensorFlow              CPU or NVIDIA GPU visual-model training
 ```
 
-Replace `SECRET_KEY` in `backend/.env` with a long random value. You can generate one with:
+| Compose service | Responsibility |
+|---|---|
+| `postgres` | PostgreSQL 16 + pgvector with persistent storage |
+| `redis` | Redis 7 cache and coordination layer |
+| `backend` | FastAPI; applies Alembic migrations before startup |
+| `frontend` | Production React build served by Nginx |
+
+## Quick start
+
+### Requirements
+
+- Docker Desktop
+- Git
+- An OpenRouter or OpenAI API key, unless a platform key is already configured
+- Optional: NVIDIA GPU with a working Docker/WSL2 GPU runtime
+
+### 1. Configure the backend
+
+```powershell
+cd C:\Users\EXCALIBUR\Documents\Codex\Intern_Project
+Copy-Item backend\.env.example backend\.env
+```
+
+Generate a JWT signing secret:
 
 ```powershell
 py -3.12 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Add the company-provided OpenRouter key to `backend/.env` without committing it:
+Set the generated `SECRET_KEY` and one provider in `backend/.env`:
 
 ```env
-OPENROUTER_API_KEY=*******
+SECRET_KEY=replace-with-the-generated-secret
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=replace-with-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_APP_TITLE=Mini Agent Platform
-LLM_MAX_TOKENS=500
-SHORT_TERM_MEMORY_MESSAGES=20
-AGENT_TOOL_CALL_LIMIT=5
-AGENT_MODEL_CALL_LIMIT=6
-AGENT_RECURSION_LIMIT=15
-HTTP_TOOL_TIMEOUT_SECONDS=10
-HTTP_TOOL_MAX_RESPONSE_BYTES=1000000
 ```
 
-The default model for newly created agents is `anthropic/claude-haiku-4.5`.
+For direct OpenAI instead:
 
-Then install the frontend dependencies:
-
-```powershell
-cd ..\frontend
-npm install
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=replace-with-your-key
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
-## Running
+Users may also save encrypted personal provider profiles from **AI providers** and assign different profiles to different agents.
 
-### Local development
+### 2. Start the platform
 
-Run from the project directory. This starts PostgreSQL and Redis in Docker,
-applies migrations, and runs the API and Vite UI locally:
-
-```powershell
-.\start.ps1
-```
-
-Open `http://localhost:5173`. API documentation is available at
-`http://127.0.0.1:8000/docs`.
-
-### Fully containerized
-
-Keep the real backend settings in `backend/.env`; that file is excluded from
-Git and from Docker build contexts. Then run:
-
-```powershell
-docker compose up --build
-```
-
-Open `http://localhost:5173`. The frontend proxies `/api` to the backend, and
-the API is also exposed at `http://127.0.0.1:8000` for Swagger and diagnostics.
-
-To run in the background:
+CPU-compatible stack:
 
 ```powershell
 docker compose up -d --build
-docker compose ps
-docker compose logs -f backend
 ```
 
-Stop containers without deleting data:
+NVIDIA GPU-enabled visual training:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+The first GPU build downloads TensorFlow CUDA libraries and is substantially larger than the CPU image. Later builds reuse Docker cache.
+
+### 3. Open and verify
+
+- Application: [http://localhost:5173](http://localhost:5173)
+- API documentation: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+
+```powershell
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8000/health
+docker compose exec backend python -m alembic current
+docker compose exec postgres pg_isready -U agent -d agent_platform
+docker compose exec redis redis-cli ping
+```
+
+Stop without deleting persistent data:
 
 ```powershell
 docker compose down
 ```
 
-PostgreSQL and Redis use named volumes, so ordinary restarts and
-`docker compose down` preserve data. Do not add `--volumes` unless you
-intentionally want to delete the database and cache.
+PostgreSQL, Redis, attachments, datasets, and generated artifacts use persistent storage. Do not add `--volumes` unless you intentionally want to remove stored data.
 
-## Phase 2
+## Local development
 
-Phase 2 includes LangChain/LangGraph `create_agent`, OpenRouter chat, persisted
-conversations, the most recent 20 messages as short-term memory, tool-call limits,
-built-in tools, and tenant-owned HTTP tools.
-
-Built-in tools:
-
-- `calculator`
-- `current_datetime`
-- `pdf_to_text` (extracts selectable text only from a PDF attached to the current chat message)
-- `text_to_pdf` (renders Markdown with a registered safe template and returns an authenticated download)
-
-`text_to_pdf` currently exposes two developer-managed templates: `blank_markdown` for a clean
-single-column document and `two_column`, adapted from the LPPL-licensed Overleaf two-column CV
-layout. Agents may select only these registered identifiers; they cannot submit arbitrary HTML or
-LaTeX. Generated PDFs are tenant-scoped, size-limited, and stored separately from uploaded PDFs.
-
-## CV extraction in chat
-
-Migration `008_cv_skill` installs a tenant skill named `cv_extraction`. On the Agents page,
-enable `pdf_to_text` and assign `cv_extraction` to the CV extraction agent. In Chat, attach a
-PDF CV and ask the agent to extract a candidate profile. The result is returned in the same
-conversation as evidence-based JSON; this stage does not score or rank the candidate.
-
-Uploads are limited to PDF files, 10 MB and 50 pages by default. Text PDFs are supported.
-Scanned/image-only PDFs return a clear OCR-required error and will be supported by the later OCR step.
-
-HTTP tools are created at `/tools` in the React UI. Each tool has a lowercase
-name, description, public HTTP/HTTPS URL, `GET` or `POST` method, and a validated
-parameter schema. Agents can be configured with any combination of built-in and
-tenant-owned tools from the agent editor.
-
-HTTP tool safeguards include model-argument validation, blocked local/private
-network addresses, disabled redirects, request timeouts, response-size limits,
-and sanitized tool errors. Redis remains optional and is not required to run the
-Phase 2 demo. Phase 3 provides Redis and `REDIS_URL`; PostgreSQL remains the
-source of truth and cache failures do not delete persistent data.
-
-## Phase 3: Docker and operations
-
-The Compose stack contains four services:
-
-- `postgres`: PostgreSQL 16 with a persistent volume and readiness check
-- `redis`: Redis 7 with a persistent volume and readiness check
-- `backend`: FastAPI; runs `alembic upgrade head` before every start
-- `frontend`: production React build served by Nginx
-
-Startup order is enforced by health checks: PostgreSQL and Redis become ready,
-the backend applies outstanding migrations and becomes healthy, then the
-frontend starts. Re-running migrations is safe: Alembic only applies revisions
-that are not already recorded in the database.
-
-Compose ports can be customized by copying the root example file:
+Requirements: Python 3.12, Node.js, and Docker Desktop.
 
 ```powershell
-Copy-Item .env.example .env
+cd C:\Users\EXCALIBUR\Documents\Codex\Intern_Project\backend
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+cd ..\frontend
+npm install
+
+cd ..
+.\start.ps1
 ```
 
-The root `.env` controls container ports and PostgreSQL container credentials.
-`backend/.env` contains application settings and the OpenRouter key.
+`start.ps1` starts PostgreSQL and Redis in Docker, applies outstanding migrations, and runs FastAPI and Vite locally. It does not erase migrations or database data.
 
-Important environment variables:
+## Visual models and GPU training
 
-| Variable | Purpose |
+Visual Models provides a configurable image-classification workflow:
+
+1. Create a model and define at least two classes.
+2. Select an architecture and image size.
+3. Upload images or a class-folder ZIP dataset.
+4. Configure epochs, batch size, validation split, learning rate, and compute device.
+5. Train asynchronously and monitor accuracy, validation accuracy, loss, and validation loss.
+6. Test the saved model with an uploaded image or live browser-camera capture.
+
+| Device option | Behavior |
 |---|---|
-| `DATABASE_URL` | SQLAlchemy PostgreSQL connection |
-| `SECRET_KEY` | JWT signing secret |
-| `OPENROUTER_API_KEY` | OpenRouter credential; never commit it |
-| `OPENROUTER_BASE_URL` | OpenRouter API base URL |
-| `REDIS_URL` | Optional Redis cache connection |
-| `CORS_ORIGINS` | Allowed browser origins |
-| `LANGFUSE_PUBLIC_KEY` | Optional Langfuse project public key |
-| `LANGFUSE_SECRET_KEY` | Optional Langfuse project secret key |
-| `LANGFUSE_BASE_URL` | Langfuse Cloud region or self-hosted URL |
-| `LANGFUSE_TRACING_ENVIRONMENT` | Trace environment such as `development` |
+| `Auto` | Uses a detected GPU; otherwise falls back to CPU |
+| `CPU` | Forces CPU execution |
+| `GPU` | Requires an available GPU and reports an error if none is detected |
 
-## Langfuse observability
+GPU training enables TensorFlow memory growth to avoid reserving all VRAM. Each run records the requested device, actual device, and detected device name.
 
-Langfuse tracing is optional and supplements the platform's own PostgreSQL API-cost
-records. Create a Langfuse project, copy its public and secret keys into
-`backend/.env`, and rebuild the backend:
+Verify GPU access inside Docker:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml exec backend `
+  python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
+```
+
+## Langfuse tracing
+
+Langfuse is optional. Add project credentials to `backend/.env`:
 
 ```env
 LANGFUSE_PUBLIC_KEY=pk-lf-...
@@ -178,94 +233,81 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_TRACING_ENVIRONMENT=development
 ```
 
+Then rebuild the backend:
+
 ```powershell
 docker compose up -d --build backend
 ```
 
-LangChain model, agent, and tool events are then sent to Langfuse. Workflow
-steps include workflow, run, tenant, agent, and artifact-key metadata; traces
-from the same workflow run share one Langfuse session ID. If the keys are empty
-or Langfuse is temporarily unavailable, workflows and the existing cost tracker
-continue to operate normally.
+If Langfuse is unavailable, execution continues using local PostgreSQL cost records. Traces may contain prompts, CV data, interview responses, tool input, and model output; use an approved retention policy with real personal data.
 
-Tracing can include prompts, model responses, tool inputs, and tool outputs.
-Because recruitment workflows may contain CV and interview information, use an
-approved Langfuse deployment and retention policy before enabling tracing with
-real candidate data. Leave both keys empty to keep tracing disabled.
+## Environment reference
 
-Useful checks:
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | SQLAlchemy PostgreSQL connection |
+| `SECRET_KEY` | JWT signing secret |
+| `LLM_PROVIDER` | Platform default: `openrouter` or `openai` |
+| `OPENROUTER_API_KEY` | Platform OpenRouter credential |
+| `OPENAI_API_KEY` | Platform OpenAI credential |
+| `REDIS_URL` | Redis connection |
+| `CORS_ORIGINS` | Allowed browser origins |
+| `SHORT_TERM_MEMORY_MESSAGES` | Recent messages included in agent context |
+| `AGENT_TOOL_CALL_LIMIT` | Tool-call safety limit per execution |
+| `AGENT_MODEL_CALL_LIMIT` | Model-call safety limit per execution |
+| `LANGFUSE_PUBLIC_KEY` | Optional Langfuse public key |
+| `LANGFUSE_SECRET_KEY` | Optional Langfuse secret key |
+| `ATTACHMENT_MAX_BYTES` | Maximum attachment size |
+| `PDF_MAX_PAGES` | Maximum accepted PDF pages |
 
-```powershell
-docker compose config
-docker compose ps
-Invoke-RestMethod http://127.0.0.1:8000/health
-docker compose exec backend python -m alembic current
-docker compose exec postgres pg_isready -U agent -d agent_platform
-docker compose exec redis redis-cli ping
-```
+See [`backend/.env.example`](backend/.env.example) and [`.env.example`](.env.example) for complete configuration.
 
-If Docker reports that the Linux engine pipe cannot be found, start Docker
-Desktop and wait until the engine shows as running before retrying.
-
-Conversation API:
-
-```text
-POST   /api/conversations
-GET    /api/conversations
-GET    /api/conversations/{conversation_id}
-PATCH  /api/conversations/{conversation_id}
-DELETE /api/conversations/{conversation_id}
-GET    /api/conversations/{conversation_id}/messages
-POST   /api/conversations/{conversation_id}/messages
-```
-
-HTTP tool API:
-
-```text
-POST   /api/tools
-GET    /api/tools
-GET    /api/tools/{tool_id}
-PATCH  /api/tools/{tool_id}
-DELETE /api/tools/{tool_id}
-```
-
-The React UI provides agent management at `/`, chat at `/chat`, and HTTP tool
-management at `/tools`. Tool calls used for an assistant response are persisted
-and displayed below that message.
-
-## Skills
-
-Tenant-owned skills are reusable instruction packages assigned to agents from
-the agent editor. A skill contains instructions, an optional JSON output schema,
-an active state, and required system or HTTP tools. Assigning a skill never
-grants tool access automatically; required tools must also be selected on the
-agent.
-
-```text
-POST   /api/skills
-GET    /api/skills
-GET    /api/skills/{skill_id}
-PATCH  /api/skills/{skill_id}
-DELETE /api/skills/{skill_id}
-```
-
-The UI provides skill management at `/skills`. Active skills are appended to
-the effective system prompt in agent assignment order. Inactive skills remain
-stored but are not included in model prompts.
-
-## Tests
-
-Install the development dependencies once:
+## Testing
 
 ```powershell
+# Backend
 cd backend
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
+
+# Frontend production build
+cd ..\frontend
+npm run build
+
+# Focused visual-training tests
+cd ..\backend
+.\.venv\Scripts\python.exe -m pytest tests\test_visual_training.py -q
 ```
 
-Run the complete backend test suite:
+Tests use isolated data and do not modify the PostgreSQL development database.
+
+## Troubleshooting
+
+### Docker Linux engine pipe not found
+
+Start Docker Desktop and wait until its engine reports **Running**, then retry.
+
+### GPU is not listed
+
+Confirm that `nvidia-smi` works, Docker Desktop uses WSL2, and the stack was started with `docker-compose.gpu.yml`. Then run the GPU verification command above.
+
+### Login or chat reports connection refused
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
+docker compose ps
+docker compose logs --tail 100 backend
+Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-The tests use a temporary in-memory database and do not modify the PostgreSQL development data.
+### Resetting data
+
+Normal restarts preserve data. `docker compose down --volumes` deletes persistent volumes and should only be used deliberately.
+
+---
+
+<p align="center">
+  <a href="http://localhost:5173"><strong>Open Mini Agent Platform</strong></a>
+  ·
+  <a href="http://127.0.0.1:8000/docs"><strong>Browse the API</strong></a>
+  ·
+  <a href="#quick-start"><strong>Back to Quick Start</strong></a>
+</p>

@@ -8,6 +8,7 @@ from app.api.deps import CurrentUser, get_current_user
 from app.core.services.visual_model_service import VisualModelError, VisualModelService
 from app.core.services.visual_dataset_service import VisualDatasetError, VisualDatasetService
 from app.core.services.visual_training_service import (
+    available_training_devices,
     VisualTrainingError,
     VisualTrainingService,
     execute_visual_training,
@@ -22,10 +23,19 @@ from app.schemas.visual_model import (
     VisualPredictionResponse,
     VisualTrainingRunCreate,
     VisualTrainingRunResponse,
+    VisualComputeDeviceResponse,
 )
 
 router = APIRouter(prefix="/visual-models", tags=["visual-models"])
 visual_training_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="visual-training")
+
+
+@router.get("/training-devices", response_model=list[VisualComputeDeviceResponse])
+def get_visual_training_devices(current: CurrentUser = Depends(get_current_user)):
+    del current
+    import tensorflow as tf
+
+    return available_training_devices(tf)
 
 
 @router.post("/{visual_model_id}/predict", response_model=VisualPredictionResponse)

@@ -4,7 +4,62 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.api.routes import visual_models as routes
-from app.core.services.visual_training_service import _normalized_image_array
+from app.core.services.visual_training_service import (
+    _normalized_image_array,
+    available_training_devices,
+    select_training_device,
+)
+
+
+class _FakeExperimental:
+    def __init__(self) -> None:
+        self.growth_device = None
+
+    def set_memory_growth(self, device, enabled: bool) -> None:
+        if enabled:
+            self.growth_device = device
+
+    def get_device_details(self, device) -> dict[str, str]:
+        return {"device_name": "Test GPU"}
+
+
+class _FakeConfig:
+    def __init__(self, gpus: list[object]) -> None:
+        self.gpus = gpus
+        self.experimental = _FakeExperimental()
+
+    def list_physical_devices(self, kind: str) -> list[object]:
+        return self.gpus if kind == "GPU" else []
+
+
+class _FakeTensorFlow:
+    def __init__(self, gpus: list[object]) -> None:
+        self.config = _FakeConfig(gpus)
+
+
+def test_training_device_auto_prefers_gpu_and_enables_memory_growth(monkeypatch) -> None:
+    gpu = type("Device", (), {"name": "physical_device:GPU:0"})()
+    tf = _FakeTensorFlow([gpu])
+    monkeypatch.setitem(__import__("sys").modules, "tensorflow", tf)
+
+    path, used, name = select_training_device(tf, "auto")
+
+    assert (path, used, name) == ("/GPU:0", "gpu", "Test GPU")
+    assert tf.config.experimental.growth_device is gpu
+
+
+def test_training_device_gpu_request_fails_when_unavailable() -> None:
+    tf = _FakeTensorFlow([])
+
+    devices = available_training_devices(tf)
+
+    assert devices[1]["available"] is False
+    try:
+        select_training_device(tf, "gpu")
+    except RuntimeError as exc:
+        assert "cannot see a compatible GPU" in str(exc)
+    else:
+        raise AssertionError("GPU selection should fail without a visible GPU")
 
 
 def _png(color: tuple[int, int, int]) -> bytes:

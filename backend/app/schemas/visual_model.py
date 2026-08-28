@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 VisualArchitecture = Literal["simple_cnn", "mobilenet_v2", "resnet50"]
+VisualTrainingDevice = Literal["auto", "cpu", "gpu"]
 
 
 class VisualModelCreate(BaseModel):
@@ -79,6 +80,7 @@ class VisualTrainingRunCreate(BaseModel):
     batch_size: int = Field(default=16, ge=1, le=256)
     validation_split: float = Field(default=0.2, ge=0.1, le=0.5)
     learning_rate: float = Field(default=0.001, gt=0, le=0.1)
+    requested_device: VisualTrainingDevice = "auto"
 
 
 class VisualTrainingRunResponse(VisualTrainingRunCreate):
@@ -93,9 +95,18 @@ class VisualTrainingRunResponse(VisualTrainingRunCreate):
     metrics: dict
     artifact_path: str | None
     error: str | None
+    used_device: Literal["cpu", "gpu"] | None
+    device_name: str | None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+
+
+class VisualComputeDeviceResponse(BaseModel):
+    value: Literal["cpu", "gpu"]
+    label: str
+    available: bool
+    description: str
 
 
 class VisualPredictionScore(BaseModel):

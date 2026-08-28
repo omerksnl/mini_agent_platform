@@ -139,6 +139,9 @@ export type VisualTrainingRun = {
   batch_size: number;
   validation_split: number;
   learning_rate: number;
+  requested_device: "auto" | "cpu" | "gpu";
+  used_device: "cpu" | "gpu" | null;
+  device_name: string | null;
   current_epoch: number;
   metrics: Record<string, number>;
   artifact_path: string | null;
@@ -148,7 +151,14 @@ export type VisualTrainingRun = {
   completed_at: string | null;
 };
 
-export type VisualTrainingInput = Pick<VisualTrainingRun, "epochs" | "batch_size" | "validation_split" | "learning_rate">;
+export type VisualComputeDevice = {
+  value: "cpu" | "gpu";
+  label: string;
+  available: boolean;
+  description: string;
+};
+
+export type VisualTrainingInput = Pick<VisualTrainingRun, "epochs" | "batch_size" | "validation_split" | "learning_rate" | "requested_device">;
 
 export type VisualPrediction = {
   predicted_class: string;
@@ -582,6 +592,7 @@ export const api = {
   startVisualTraining(id: string, body: VisualTrainingInput) { return request<VisualTrainingRun>(`/api/visual-models/${id}/training-runs`, { method: "POST", body: JSON.stringify(body) }); },
   getLatestVisualTraining(id: string) { return request<VisualTrainingRun | null>(`/api/visual-models/${id}/training-runs/latest`); },
   getVisualTrainingRun(id: string) { return request<VisualTrainingRun>(`/api/visual-models/training-runs/${id}`); },
+  getVisualTrainingDevices() { return request<VisualComputeDevice[]>("/api/visual-models/training-devices"); },
   predictVisualModel(id: string, image: File) {
     const body = new FormData();
     body.append("image", image);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { api, type VisualDatasetSummary, type VisualModel, type VisualModelInput, type VisualPrediction, type VisualTrainingInput, type VisualTrainingRun } from "../api";
+import { api, type VisualComputeDevice, type VisualDatasetSummary, type VisualModel, type VisualModelInput, type VisualPrediction, type VisualTrainingInput, type VisualTrainingRun } from "../api";
 import { AppHeader } from "../components/AppHeader";
 
 const empty: VisualModelInput = {
@@ -21,7 +21,7 @@ const architectureLabels: Record<VisualModelInput["architecture"], string> = {
   resnet50: "ResNet50",
 };
 
-const defaultTraining: VisualTrainingInput = { epochs: 5, batch_size: 16, validation_split: 0.2, learning_rate: 0.001 };
+const defaultTraining: VisualTrainingInput = { epochs: 5, batch_size: 16, validation_split: 0.2, learning_rate: 0.001, requested_device: "auto" };
 
 export function VisualModelsPage() {
   const [models, setModels] = useState<VisualModel[]>([]);
@@ -39,6 +39,7 @@ export function VisualModelsPage() {
   const [clearDatasetOpen, setClearDatasetOpen] = useState(false);
   const [trainingConfig, setTrainingConfig] = useState<VisualTrainingInput>(defaultTraining);
   const [trainingRun, setTrainingRun] = useState<VisualTrainingRun | null>(null);
+  const [trainingDevices, setTrainingDevices] = useState<VisualComputeDevice[]>([]);
   const [startingTraining, setStartingTraining] = useState(false);
   const [predictionFile, setPredictionFile] = useState<File | null>(null);
   const [predictionPreview, setPredictionPreview] = useState("");
@@ -56,6 +57,10 @@ export function VisualModelsPage() {
   }
 
   useEffect(() => { void load().catch((err) => setError(err.message)); }, []);
+
+  useEffect(() => {
+    void api.getVisualTrainingDevices().then(setTrainingDevices).catch(() => setTrainingDevices([]));
+  }, []);
 
   useEffect(() => {
     if (!trainingRun || !["queued", "running"].includes(trainingRun.status)) return;
@@ -307,12 +312,14 @@ export function VisualModelsPage() {
               <label>Batch size<input className="clean-number-input" type="number" min={1} max={256} value={trainingConfig.batch_size} disabled={trainingRun?.status === "queued" || trainingRun?.status === "running"} onChange={(event) => setTrainingConfig({ ...trainingConfig, batch_size: Number(event.target.value) })}/></label>
               <label>Validation split<input className="clean-number-input" type="number" min={0.1} max={0.5} step={0.05} value={trainingConfig.validation_split} disabled={trainingRun?.status === "queued" || trainingRun?.status === "running"} onChange={(event) => setTrainingConfig({ ...trainingConfig, validation_split: Number(event.target.value) })}/></label>
               <label>Learning rate<input className="clean-number-input" type="number" min={0.000001} max={0.1} step={0.0001} value={trainingConfig.learning_rate} disabled={trainingRun?.status === "queued" || trainingRun?.status === "running"} onChange={(event) => setTrainingConfig({ ...trainingConfig, learning_rate: Number(event.target.value) })}/></label>
+              <label>Compute device<select value={trainingConfig.requested_device} disabled={trainingRun?.status === "queued" || trainingRun?.status === "running"} onChange={(event) => setTrainingConfig({ ...trainingConfig, requested_device: event.target.value as "auto" | "cpu" | "gpu" })}><option value="auto">Auto · prefer GPU</option><option value="cpu">CPU</option><option value="gpu" disabled={!trainingDevices.some((device) => device.value === "gpu" && device.available)}>GPU{trainingDevices.some((device) => device.value === "gpu" && device.available) ? "" : " · unavailable"}</option></select><small>{trainingDevices.find((device) => device.value === "gpu")?.description ?? "Checking GPU availability..."}</small></label>
             </div>
             {trainingRun ? <div className="training-progress-card">
               <div className="training-progress-label"><strong>{trainingRun.status === "completed" ? "Training completed" : trainingRun.status === "failed" ? "Training failed" : `Epoch ${trainingRun.current_epoch} of ${trainingRun.epochs}`}</strong><span>{trainingRun.progress}%</span></div>
               <div className="training-progress-track"><span style={{ width: `${trainingRun.progress}%` }}/></div>
               {Object.keys(trainingRun.metrics).length ? <div className="training-metrics">{Object.entries(trainingRun.metrics).map(([key, value]) => <div key={key}><span>{key.replaceAll("_", " ")}</span><strong>{Number(value).toFixed(4)}</strong></div>)}</div> : null}
               {trainingRun.artifact_path ? <p className="success-note">Saved model artifact: <code>{trainingRun.artifact_path}</code></p> : null}
+              {trainingRun.used_device ? <p className="training-device-note"><strong>Compute:</strong> {trainingRun.used_device.toUpperCase()} · {trainingRun.device_name}</p> : null}
               {trainingRun.error ? <div className="error-banner">{trainingRun.error}</div> : null}
             </div> : null}
             <div className="form-actions"><button className="btn btn-primary" type="button" disabled={!dataset.ready_for_training || startingTraining || trainingRun?.status === "queued" || trainingRun?.status === "running"} onClick={() => void startTraining()}>{startingTraining ? "Starting..." : trainingRun?.status === "completed" || trainingRun?.status === "failed" ? "Train again" : "Start training"}</button></div>

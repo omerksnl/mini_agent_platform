@@ -19,6 +19,63 @@ from app.schemas.visual_model import VisualPredictionResponse, VisualTrainingRun
 logger = logging.getLogger(__name__)
 
 
+def available_training_devices(tf) -> list[dict[str, object]]:
+    """Return stable UI metadata without claiming that an unavailable GPU can run."""
+    gpus = tf.config.list_physical_devices("GPU")
+    gpu_name = _device_name(gpus[0]) if gpus else "No compatible GPU detected"
+    return [
+        {
+            "value": "cpu",
+            "label": "CPU",
+            "available": True,
+            "description": "Always available; slower but uses system memory.",
+        },
+        {
+            "value": "gpu",
+            "label": gpu_name if gpus else "GPU",
+            "available": bool(gpus),
+            "description": (
+                "CUDA acceleration is available; TensorFlow memory growth is enabled."
+                if gpus
+                else "Start the GPU Docker configuration on an NVIDIA-compatible host."
+            ),
+        },
+    ]
+
+
+def select_training_device(tf, requested: str) -> tuple[str, str, str]:
+    """Resolve auto/cpu/gpu to a TensorFlow device and avoid preallocating all VRAM."""
+    gpus = tf.config.list_physical_devices("GPU")
+    if requested == "gpu" and not gpus:
+        raise RuntimeError(
+            "GPU training was requested, but TensorFlow cannot see a compatible GPU. "
+            "Use Auto/CPU or start Docker with docker-compose.gpu.yml."
+        )
+    if requested == "cpu" or not gpus:
+        return "/CPU:0", "cpu", "CPU"
+
+    gpu = gpus[0]
+    try:
+        tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError:
+        # TensorFlow raises after device initialization; the already configured GPU remains usable.
+        logger.debug("GPU memory growth could not be changed after initialization", exc_info=True)
+    return "/GPU:0", "gpu", _device_name(gpu)
+
+
+def _device_name(device) -> str:
+    details = getattr(device, "name", "GPU")
+    try:
+        import tensorflow as tf
+
+        details = tf.config.experimental.get_device_details(device).get(
+            "device_name", details
+        )
+    except (ImportError, RuntimeError, ValueError):
+        pass
+    return str(details).split("physical_device:")[-1].strip() or "GPU"
+
+
 class VisualTrainingError(Exception):
     def __init__(self, message: str, status_code: int = 400) -> None:
         self.message = message
@@ -169,6 +226,13 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
 
         import tensorflow as tf
 
+        device_path, used_device, device_name = select_training_device(
+            tf, run.requested_device
+        )
+        run.used_device = used_device
+        run.device_name = device_name
+        db.commit()
+
         dataset_root = (
             Path(get_settings().upload_directory).resolve()
             / "visual-datasets" / str(tenant_id) / str(model_config.id)
@@ -185,11 +249,14 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
             batch_size=run.batch_size,
             color_mode=color_mode,
         )
-        train_ds = tf.keras.utils.image_dataset_from_directory(subset="training", **common)
-        val_ds = tf.keras.utils.image_dataset_from_directory(subset="validation", **common)
-        train_ds = train_ds.prefetch(tf.data.AUTOTUNE)
-        val_ds = val_ds.prefetch(tf.data.AUTOTUNE)
-        keras_model = _build_model(tf, model_config, len(model_config.class_names), run.learning_rate)
+        with tf.device(device_path):
+            train_ds = tf.keras.utils.image_dataset_from_directory(subset="training", **common)
+            val_ds = tf.keras.utils.image_dataset_from_directory(subset="validation", **common)
+            train_ds = train_ds.prefetch(tf.data.AUTOTUNE)
+            val_ds = val_ds.prefetch(tf.data.AUTOTUNE)
+            keras_model = _build_model(
+                tf, model_config, len(model_config.class_names), run.learning_rate
+            )
 
         class ProgressCallback(tf.keras.callbacks.Callback):
             def on_epoch_end(self, epoch, logs=None):
@@ -208,7 +275,14 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
                 finally:
                     callback_db.close()
 
-        keras_model.fit(train_ds, validation_data=val_ds, epochs=run.epochs, callbacks=[ProgressCallback()], verbose=0)
+        with tf.device(device_path):
+            keras_model.fit(
+                train_ds,
+                validation_data=val_ds,
+                epochs=run.epochs,
+                callbacks=[ProgressCallback()],
+                verbose=0,
+            )
         artifact_directory = (
             Path(get_settings().upload_directory).resolve()
             / "visual-model-artifacts" / str(tenant_id) / str(model_config.id)
