@@ -17,5 +17,7 @@ export function ProtectedRoute() {
     return <Navigate to="/login" replace />;
   }
 
-  return <Outlet />;
+  // Remount the active page when another account becomes active. This clears
+  // tenant/user-scoped selections that may still be open in another browser tab.
+  return <Outlet key={me.user.id} />;
 }

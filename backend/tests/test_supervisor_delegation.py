@@ -109,10 +109,15 @@ def test_supervisor_forwards_attachments_only_to_pdf_capable_child(
             def __init__(self) -> None:
                 self.settings = get_settings()
                 self.forwarded = None
+                self.child_skipped_validation = None
 
-            def complete(self, agent, messages, http_tools=None, attachments=None, db=None):
+            def complete(
+                self, agent, messages, http_tools=None, attachments=None, db=None,
+                skip_response_validation=False, **kwargs,
+            ):
                 if agent.agent_type == "normal":
                     self.forwarded = attachments
+                    self.child_skipped_validation = skip_response_validation
                     return LLMResult(
                         content="profile json",
                         used_tools=["pdf_to_text"],
@@ -121,9 +126,12 @@ def test_supervisor_forwards_attachments_only_to_pdf_capable_child(
                 return super().complete(agent, messages, http_tools, attachments, db)
 
         llm = RecordingClient()
-        llm._route_request = lambda *args, **kwargs: RoutingDecision(request_parts=["process"], required_tool_names=[])
+        def fail_if_request_router_runs(*_args, **_kwargs):
+            raise AssertionError("Supervisors must delegate without the generic request router")
 
-        def invoke(_model, tools, _prompt, _messages, _callback):
+        llm._route_request = fail_if_request_router_runs
+
+        def invoke(_model, tools, _prompt, _messages, _callback, **_kwargs):
             delegation = next(tool for tool in tools if tool.name.startswith("delegate_to_"))
             result = delegation.invoke({"task": "Extract CandidateProfile"})
             return [AIMessage(content=result)]
@@ -132,6 +140,7 @@ def test_supervisor_forwards_attachments_only_to_pdf_capable_child(
         result = llm.complete(supervisor, [{"role": "user", "content": "Process CV"}], attachments=[attachment], db=db)
         assert result.content == "profile json"
         assert llm.forwarded == [attachment]
+        assert llm.child_skipped_validation is True
         assert result.used_agents == ["cv_ai"]
         assert result.used_tools == []
         assert result.api_cost_usd == 0.0042

@@ -32,3 +32,11 @@ class UserResponse(BaseModel):
 class MeResponse(BaseModel):
     user: UserResponse
     tenant_name: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    email: EmailStr | None = None
+    tenant_name: str | None = Field(default=None, min_length=1, max_length=255)
+    current_password: str | None = None
+    new_password: str | None = Field(default=None, min_length=8, max_length=128)

@@ -1,35 +1,47 @@
 from datetime import datetime
 from uuid import UUID
 
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AgentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    agent_type: Literal["normal", "supervisor"] = "normal"
+    agent_type: Literal["normal", "supervisor", "router"] = "normal"
     system_prompt: str = ""
     model: str = Field(default="anthropic/claude-haiku-4.5", min_length=1, max_length=128)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    collection_search_limit: int = Field(default=5, ge=1, le=20)
     system_tools: list[str] = Field(default_factory=lambda: ["calculator", "current_datetime"])
     tool_ids: list[UUID] = Field(default_factory=list)
     skill_ids: list[UUID] = Field(default_factory=list)
     collection_ids: list[UUID] = Field(default_factory=list)
+    guardrail_ids: list[UUID] = Field(default_factory=list)
     managed_agent_ids: list[UUID] = Field(default_factory=list)
+    router_target_ids: list[UUID] = Field(default_factory=list)
+    managed_remote_agent_ids: list[UUID] = Field(default_factory=list)
+    router_remote_agent_ids: list[UUID] = Field(default_factory=list)
+    remote_agent_ids: list[UUID] = Field(default_factory=list)
 
 
 class AgentUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    agent_type: Literal["normal", "supervisor"] | None = None
+    agent_type: Literal["normal", "supervisor", "router"] | None = None
     system_prompt: str | None = None
     model: str | None = Field(default=None, min_length=1, max_length=128)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    collection_search_limit: int | None = Field(default=None, ge=1, le=20)
     system_tools: list[str] | None = None
     tool_ids: list[UUID] | None = None
     skill_ids: list[UUID] | None = None
     collection_ids: list[UUID] | None = None
+    guardrail_ids: list[UUID] | None = None
     managed_agent_ids: list[UUID] | None = None
+    router_target_ids: list[UUID] | None = None
+    managed_remote_agent_ids: list[UUID] | None = None
+    router_remote_agent_ids: list[UUID] | None = None
+    remote_agent_ids: list[UUID] | None = None
 
     @model_validator(mode="after")
     def reject_explicit_nulls(self) -> Self:
@@ -50,15 +62,62 @@ class AgentResponse(BaseModel):
     id: UUID
     tenant_id: UUID
     name: str
-    agent_type: Literal["normal", "supervisor"]
-    supervisor_id: UUID | None
+    agent_type: Literal["normal", "supervisor", "router"]
+    supervisor_ids: list[UUID]
     system_prompt: str
     model: str
     temperature: float
+    collection_search_limit: int
+    a2a_enabled: bool
+    a2a_description: str
     system_tools: list[str]
     tool_ids: list[UUID]
     skill_ids: list[UUID]
     collection_ids: list[UUID]
+    guardrail_ids: list[UUID]
     managed_agent_ids: list[UUID]
+    router_target_ids: list[UUID]
+    managed_remote_agent_ids: list[UUID]
+    router_remote_agent_ids: list[UUID]
+    remote_agent_ids: list[UUID]
+    router_ids: list[UUID]
     created_at: datetime
     updated_at: datetime
+
+
+class AgentPromptVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    agent_id: UUID
+    version_number: int
+    system_prompt: str
+    created_at: datetime
+    is_current: bool
+    evaluation: dict[str, Any] | None = None
+    evaluated_at: datetime | None = None
+
+
+class PromptEvaluationBatchResponse(BaseModel):
+    versions: list[AgentPromptVersionResponse]
+    api_cost_usd: float
+
+
+class PromptImproveRequest(BaseModel):
+    draft_prompt: str = Field(max_length=50000)
+
+
+class PromptImproveResponse(BaseModel):
+    improved_prompt: str
+    rationale: list[str]
+    api_cost_usd: float
+
+
+class AgentA2APublishRequest(BaseModel):
+    description: str = Field(default="", max_length=2000)
+
+
+class AgentA2APublishResponse(BaseModel):
+    api_key: str
+    agent_card_url: str
+    endpoint_url: str

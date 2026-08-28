@@ -8,7 +8,7 @@ from app.core.services.tool_service import ToolError, ToolService
 from app.models import Skill
 from app.schemas.skill import SkillCreate, SkillUpdate
 
-AVAILABLE_SYSTEM_TOOLS = {"calculator", "current_datetime", "pdf_to_text"}
+AVAILABLE_SYSTEM_TOOLS = {"calculator", "current_datetime", "pdf_to_text", "text_to_pdf"}
 
 
 class SkillError(Exception):

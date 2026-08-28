@@ -1,13 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { api, type Agent, type Attachment, type Conversation, type Message } from "../api";
-import { useAuth } from "../AuthContext";
+import { HumanFeedback } from "../components/HumanFeedback";
+import { AppHeader } from "../components/AppHeader";
 
 export function ChatPage() {
-  const { me, logout } = useAuth();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<Conversation | null>(null);
@@ -30,6 +29,17 @@ export function ChatPage() {
   function setCurrentDraft(value: string) {
     if (!selected) return;
     setDrafts((current) => ({ ...current, [selected.id]: value }));
+  }
+
+  async function handleMarkdownLink(event: MouseEvent<HTMLAnchorElement>, href?: string) {
+    if (!href?.match(/^\/api\/generated-files\/[0-9a-f-]+\/download$/i)) return;
+    event.preventDefault();
+    const filename = event.currentTarget.textContent?.trim() || "document.pdf";
+    try {
+      await api.downloadGeneratedFile(href, filename);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Generated PDF could not be downloaded");
+    }
   }
 
   function scrollThreadToBottom() {
@@ -221,18 +231,7 @@ export function ChatPage() {
 
   return (
     <div className="app-shell chat-shell">
-      <header className="box topbar">
-        <div>
-          <p className="brand">Mini Agent</p>
-          <p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p>
-        </div>
-        <div className="topbar-actions">
-          <Link className="btn btn-primary" to="/">Agents</Link>
-          <Link className="btn" to="/tools">Tools</Link>
-          <Link className="btn" to="/skills">Skills</Link>
-          <button type="button" className="btn" onClick={logout}>Sign out</button>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="layout chat-layout">
         <section className="box panel conversation-panel">
@@ -315,7 +314,14 @@ export function ChatPage() {
                       </div>
                       {message.role === "assistant" ? (
                         <div className="markdown-content">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children }) => (
+                                <a href={href} onClick={(event) => void handleMarkdownLink(event, href)}>{children}</a>
+                              ),
+                            }}
+                          >{message.content}</ReactMarkdown>
                         </div>
                       ) : (
                         <p>{message.content}</p>
@@ -339,6 +345,7 @@ export function ChatPage() {
                       {message.role === "assistant" && message.api_cost_usd > 0 ? (
                         <p className="message-cost">API cost: ${message.api_cost_usd.toFixed(6)}</p>
                       ) : null}
+                      {message.role === "assistant" ? <HumanFeedback targetType="message" targetId={message.id} /> : null}
                       <div className="message-actions">
                         <button
                           type="button"

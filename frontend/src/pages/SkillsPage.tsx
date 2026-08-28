@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 
 import { api, type HttpTool, type Skill, type SkillInput } from "../api";
-import { useAuth } from "../AuthContext";
+import { AppHeader } from "../components/AppHeader";
+import { SingleAgentWorkspaceHeader } from "../components/SingleAgentWorkspaceHeader";
 
 type SkillForm = Omit<SkillInput, "output_schema"> & { outputSchemaText: string };
 type PanelMode = "idle" | "create" | "edit";
@@ -18,7 +18,6 @@ const emptyForm: SkillForm = {
 };
 
 export function SkillsPage() {
-  const { me, logout } = useAuth();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [tools, setTools] = useState<HttpTool[]>([]);
   const [form, setForm] = useState<SkillForm>(emptyForm);
@@ -121,13 +120,8 @@ export function SkillsPage() {
 
   return (
     <div className="app-shell">
-      <header className="box topbar">
-        <div><p className="brand">Mini Agent</p><p className="workspace">{me?.tenant_name} · {me?.user.full_name}</p></div>
-        <div className="topbar-actions">
-          <Link className="btn" to="/">Agents</Link><Link className="btn" to="/chat">Chat</Link>
-          <Link className="btn" to="/tools">Tools</Link><button className="btn" onClick={logout}>Sign out</button>
-        </div>
-      </header>
+      <AppHeader />
+      <SingleAgentWorkspaceHeader />
       <main className="layout">
         <section className="box panel">
           <div className="panel-head"><h1>Skills</h1><button className="btn btn-primary" onClick={startCreate}>New skill</button></div>
@@ -151,7 +145,7 @@ export function SkillsPage() {
               <label>Instructions<textarea rows={12} value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} required /></label>
               <label>Output schema (optional JSON object)<textarea rows={8} placeholder={'{"field": "description"}'} value={form.outputSchemaText} onChange={(e) => setForm({ ...form, outputSchemaText: e.target.value })} /></label>
               <fieldset className="tool-picker"><legend>Required tools</legend><span className="field-hint">Agents must also be granted these tools explicitly.</span>
-                {["calculator", "current_datetime", "pdf_to_text"].map((name) => <label className="tool-option" key={name}><input type="checkbox" checked={form.required_system_tools.includes(name)} onChange={(e) => toggleSystemTool(name, e.target.checked)} /><span><strong>{name}</strong><small>System tool</small></span></label>)}
+                {["calculator", "current_datetime", "pdf_to_text", "text_to_pdf"].map((name) => <label className="tool-option" key={name}><input type="checkbox" checked={form.required_system_tools.includes(name)} onChange={(e) => toggleSystemTool(name, e.target.checked)} /><span><strong>{name}</strong><small>System tool</small></span></label>)}
                 {tools.map((tool) => <label className="tool-option" key={tool.id}><input type="checkbox" checked={form.required_tool_ids.includes(tool.id)} onChange={(e) => toggleHttpTool(tool.id, e.target.checked)} /><span><strong>{tool.name}</strong><small>HTTP tool</small></span></label>)}
               </fieldset>
               <label className="inline-check"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />Active</label>

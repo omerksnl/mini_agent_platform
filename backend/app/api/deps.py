@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session
 from app.core.security import decode_access_token, parse_uuid
 from app.core.services.auth_service import AuthService
 from app.core.services.llm_service import LLMClient, LLMError, OpenRouterLLMClient
+from app.core.services.provider_service import ProviderError, ProviderService
 from app.db.session import get_db
 from app.models import Tenant, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_llm_client() -> LLMClient:
+def get_platform_llm_client() -> LLMClient:
     try:
         return OpenRouterLLMClient()
     except LLMError as exc:
@@ -59,3 +60,14 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     return CurrentUser(user=user, tenant=tenant)
+
+
+def get_llm_client(
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+) -> LLMClient:
+    try:
+        credentials = ProviderService(db).resolve(current.user)
+        return OpenRouterLLMClient(credentials, user_id=current.user.id)
+    except (ProviderError, LLMError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

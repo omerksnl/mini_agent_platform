@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, JSON, Column, DateTime, Float, ForeignKey, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Integer, JSON, Column, DateTime, Float, ForeignKey, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -27,6 +27,43 @@ agent_collections = Table(
     "agent_collections", Base.metadata,
     Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
     Column("collection_id", UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True),
+)
+
+agent_guardrails = Table(
+    "agent_guardrails",
+    Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("guardrail_id", UUID(as_uuid=True), ForeignKey("guardrails.id", ondelete="CASCADE"), primary_key=True),
+)
+
+supervisor_agents = Table(
+    "supervisor_agents", Base.metadata,
+    Column("supervisor_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("managed_agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+router_agents = Table(
+    "router_agents", Base.metadata,
+    Column("router_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("target_agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+supervisor_remote_agents = Table(
+    "supervisor_remote_agents", Base.metadata,
+    Column("supervisor_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("remote_agent_id", UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+router_remote_agents = Table(
+    "router_remote_agents", Base.metadata,
+    Column("router_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("remote_agent_id", UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+agent_remote_tools = Table(
+    "agent_remote_tools", Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("remote_agent_id", UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
@@ -59,7 +96,14 @@ class Tenant(Base):
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="tenant")
     messages: Mapped[list["Message"]] = relationship(back_populates="tenant")
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="tenant")
+    generated_files: Mapped[list["GeneratedFile"]] = relationship(back_populates="tenant")
     collections: Mapped[list["Collection"]] = relationship(back_populates="tenant")
+    workflows: Mapped[list["Workflow"]] = relationship(back_populates="tenant")
+    remote_agents: Mapped[list["RemoteAgent"]] = relationship(back_populates="tenant")
+    visual_models: Mapped[list["VisualModel"]] = relationship(back_populates="tenant")
+    visual_dataset_images: Mapped[list["VisualDatasetImage"]] = relationship(
+        back_populates="tenant"
+    )
 
 
 class User(Base):
@@ -72,9 +116,170 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    llm_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    encrypted_llm_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tenant: Mapped[Tenant] = relationship(back_populates="users")
+    remote_agents: Mapped[list["RemoteAgent"]] = relationship(back_populates="owner_user")
+    provider_credentials: Mapped[list["ProviderCredential"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class ProviderCredential(Base):
+    __tablename__ = "provider_credentials"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_provider_credentials_user_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="provider_credentials")
+
+
+class AgentProviderAssignment(Base):
+    __tablename__ = "agent_provider_assignments"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider_credential_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("provider_credentials.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Guardrail(Base):
+    __tablename__ = "guardrails"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_guardrails_tenant_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    guardrail_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    stages: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    action: Mapped[str] = mapped_column(String(20), nullable=False, default="block")
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    agents: Mapped[list["Agent"]] = relationship(
+        secondary=agent_guardrails, back_populates="guardrails"
+    )
+
+
+class VisualModel(Base):
+    __tablename__ = "visual_models"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_visual_models_tenant_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    task_type: Mapped[str] = mapped_column(String(40), nullable=False, default="image_classification")
+    architecture: Mapped[str] = mapped_column(String(40), nullable=False)
+    class_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    image_width: Mapped[int] = mapped_column(Integer, nullable=False, default=224)
+    image_height: Mapped[int] = mapped_column(Integer, nullable=False, default=224)
+    channels: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    use_pretrained_weights: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="visual_models")
+    dataset_images: Mapped[list["VisualDatasetImage"]] = relationship(
+        back_populates="visual_model", cascade="all, delete-orphan"
+    )
+    training_runs: Mapped[list["VisualTrainingRun"]] = relationship(
+        back_populates="visual_model", cascade="all, delete-orphan"
+    )
+
+
+class VisualDatasetImage(Base):
+    __tablename__ = "visual_dataset_images"
+    __table_args__ = (
+        UniqueConstraint("visual_model_id", "sha256", name="uq_visual_dataset_model_sha256"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    visual_model_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("visual_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    class_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    tenant: Mapped[Tenant] = relationship(back_populates="visual_dataset_images")
+    visual_model: Mapped[VisualModel] = relationship(back_populates="dataset_images")
+
+
+class VisualTrainingRun(Base):
+    __tablename__ = "visual_training_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    visual_model_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("visual_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    epochs: Mapped[int] = mapped_column(Integer, nullable=False)
+    batch_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    validation_split: Mapped[float] = mapped_column(Float, nullable=False)
+    learning_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    requested_device: Mapped[str] = mapped_column(String(12), nullable=False, default="auto")
+    used_device: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    device_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    current_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    training_history: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evaluation: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    artifact_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    visual_model: Mapped[VisualModel] = relationship(back_populates="training_runs")
 
 
 class Agent(Base):
@@ -86,14 +291,23 @@ class Agent(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
-    supervisor_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True
-    )
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    active_prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_prompt_versions.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
     model: Mapped[str] = mapped_column(
         String(128), nullable=False, default="anthropic/claude-haiku-4.5"
     )
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+    collection_search_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    a2a_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    a2a_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    a2a_api_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    a2a_published_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     system_tools: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=lambda: ["calculator", "current_datetime"]
     )
@@ -103,7 +317,10 @@ class Agent(Base):
     )
 
     tenant: Mapped[Tenant] = relationship(back_populates="agents")
-    conversations: Mapped[list["Conversation"]] = relationship(back_populates="agent")
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
     http_tools: Mapped[list["HttpTool"]] = relationship(
         secondary=agent_tools,
         back_populates="agents",
@@ -116,12 +333,51 @@ class Agent(Base):
     collections: Mapped[list["Collection"]] = relationship(
         secondary=agent_collections, back_populates="agents"
     )
-
-    supervisor: Mapped["Agent | None"] = relationship(
-        remote_side="Agent.id", back_populates="managed_agents", foreign_keys=[supervisor_id]
+    guardrails: Mapped[list["Guardrail"]] = relationship(
+        secondary=agent_guardrails, back_populates="agents"
     )
+
     managed_agents: Mapped[list["Agent"]] = relationship(
-        back_populates="supervisor", foreign_keys=[supervisor_id]
+        secondary=supervisor_agents,
+        primaryjoin=id == supervisor_agents.c.supervisor_id,
+        secondaryjoin=id == supervisor_agents.c.managed_agent_id,
+        back_populates="supervisors",
+    )
+    supervisors: Mapped[list["Agent"]] = relationship(
+        secondary=supervisor_agents,
+        primaryjoin=id == supervisor_agents.c.managed_agent_id,
+        secondaryjoin=id == supervisor_agents.c.supervisor_id,
+        back_populates="managed_agents",
+    )
+    router_targets: Mapped[list["Agent"]] = relationship(
+        secondary=router_agents,
+        primaryjoin=id == router_agents.c.router_id,
+        secondaryjoin=id == router_agents.c.target_agent_id,
+        back_populates="routers",
+    )
+    managed_remote_agents: Mapped[list["RemoteAgent"]] = relationship(
+        secondary=supervisor_remote_agents,
+        primaryjoin=id == supervisor_remote_agents.c.supervisor_id,
+    )
+    router_remote_targets: Mapped[list["RemoteAgent"]] = relationship(
+        secondary=router_remote_agents,
+        primaryjoin=id == router_remote_agents.c.router_id,
+    )
+    remote_agent_tools: Mapped[list["RemoteAgent"]] = relationship(
+        secondary=agent_remote_tools,
+        primaryjoin=id == agent_remote_tools.c.agent_id,
+    )
+    routers: Mapped[list["Agent"]] = relationship(
+        secondary=router_agents,
+        primaryjoin=id == router_agents.c.target_agent_id,
+        secondaryjoin=id == router_agents.c.router_id,
+        back_populates="router_targets",
+    )
+    prompt_versions: Mapped[list["AgentPromptVersion"]] = relationship(
+        back_populates="agent",
+        foreign_keys="AgentPromptVersion.agent_id",
+        cascade="all, delete-orphan",
+        order_by="desc(AgentPromptVersion.version_number)",
     )
 
     @property
@@ -141,8 +397,111 @@ class Agent(Base):
         return [item.id for item in self.collections]
 
     @property
+    def guardrail_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.guardrails]
+
+    @property
     def managed_agent_ids(self) -> list[uuid.UUID]:
         return [item.id for item in self.managed_agents]
+
+    @property
+    def supervisor_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.supervisors]
+
+    @property
+    def router_target_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.router_targets]
+
+    @property
+    def router_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.routers]
+
+    @property
+    def managed_remote_agent_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.managed_remote_agents]
+
+    @property
+    def router_remote_agent_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.router_remote_targets]
+
+    @property
+    def remote_agent_ids(self) -> list[uuid.UUID]:
+        return [item.id for item in self.remote_agent_tools]
+
+
+class AgentPromptVersion(Base):
+    __tablename__ = "agent_prompt_versions"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "version_number", name="uq_agent_prompt_versions_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    agent: Mapped[Agent] = relationship(
+        back_populates="prompt_versions",
+        foreign_keys=[agent_id],
+    )
+
+
+class RemoteAgent(Base):
+    __tablename__ = "remote_agents"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "agent_card_url", name="uq_remote_agents_owner_card_url"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    agent_card_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    endpoint_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    billing_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="owner")
+    provider_credential_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("provider_credentials.id", ondelete="SET NULL"), nullable=True
+    )
+    protocol_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
+    skills: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="remote_agents")
+    owner_user: Mapped[User] = relationship(back_populates="remote_agents")
+
+
+class A2ACallUsage(Base):
+    __tablename__ = "a2a_call_usage"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    remote_agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    billing_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    billed_to: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class HttpTool(Base):
@@ -172,6 +531,236 @@ class HttpTool(Base):
         secondary=skill_tools,
         back_populates="http_tools",
     )
+
+
+class Workflow(Base):
+    __tablename__ = "workflows"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_workflows_tenant_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    tenant: Mapped[Tenant] = relationship(back_populates="workflows")
+    steps: Mapped[list["WorkflowStep"]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowStep.position",
+        foreign_keys="WorkflowStep.workflow_id",
+    )
+    routes: Mapped[list["WorkflowRoute"]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowRoute.priority",
+    )
+    runs: Mapped[list["WorkflowRun"]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
+
+
+class WorkflowStep(Base):
+    __tablename__ = "workflow_steps"
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "step_key", name="uq_workflow_steps_key"),
+        UniqueConstraint("workflow_id", "position", name="uq_workflow_steps_position"),
+        CheckConstraint(
+            "step_type IN ('agent', 'remote_agent', 'workflow', 'http_tool', 'system_tool', 'human_wait', 'report')",
+            name="ck_workflow_steps_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    step_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=True
+    )
+    remote_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("remote_agents.id", ondelete="RESTRICT"), nullable=True
+    )
+    target_workflow_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True
+    )
+    http_tool_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("http_tools.id", ondelete="RESTRICT"), nullable=True
+    )
+    system_tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="steps", foreign_keys=[workflow_id])
+    agent: Mapped[Agent | None] = relationship(foreign_keys=[agent_id])
+    remote_agent: Mapped[RemoteAgent | None] = relationship(foreign_keys=[remote_agent_id])
+    target_workflow: Mapped[Workflow | None] = relationship(foreign_keys=[target_workflow_id])
+    http_tool: Mapped[HttpTool | None] = relationship(foreign_keys=[http_tool_id])
+    outgoing_routes: Mapped[list["WorkflowRoute"]] = relationship(
+        foreign_keys="WorkflowRoute.source_step_id", viewonly=True
+    )
+    incoming_routes: Mapped[list["WorkflowRoute"]] = relationship(
+        foreign_keys="WorkflowRoute.target_step_id", viewonly=True
+    )
+
+
+class WorkflowRoute(Base):
+    __tablename__ = "workflow_routes"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id", "source_step_id", "target_step_id", "condition",
+            name="uq_workflow_routes_edge_condition",
+        ),
+        CheckConstraint(
+            "condition IN ('success', 'failure', 'input_available', 'always')",
+            name="ck_workflow_routes_condition",
+        ),
+        CheckConstraint("source_step_id <> target_step_id", name="ck_workflow_routes_no_self"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_step_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="CASCADE"), nullable=False
+    )
+    target_step_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="CASCADE"), nullable=False
+    )
+    condition: Mapped[str] = mapped_column(String(30), nullable=False, default="success")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="routes")
+    source_step: Mapped[WorkflowStep] = relationship(foreign_keys=[source_step_id])
+    target_step: Mapped[WorkflowStep] = relationship(foreign_keys=[target_step_id])
+
+    @property
+    def source_step_key(self) -> str:
+        return self.source_step.step_key
+
+    @property
+    def target_step_key(self) -> str:
+        return self.target_step.step_key
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'waiting', 'completed', 'failed')",
+            name="ck_workflow_runs_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    started_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    current_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="SET NULL"), nullable=True
+    )
+    input_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    total_api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    workflow: Mapped[Workflow] = relationship(back_populates="runs")
+    current_step: Mapped[WorkflowStep | None] = relationship(foreign_keys=[current_step_id])
+    step_runs: Mapped[list["WorkflowStepRun"]] = relationship(
+        back_populates="workflow_run", cascade="all, delete-orphan", order_by="WorkflowStepRun.sequence"
+    )
+    artifacts: Mapped[list["WorkflowArtifact"]] = relationship(
+        back_populates="workflow_run", cascade="all, delete-orphan", order_by="WorkflowArtifact.sequence"
+    )
+    attachments: Mapped[list["Attachment"]] = relationship(back_populates="workflow_run")
+
+
+class WorkflowStepRun(Base):
+    __tablename__ = "workflow_step_runs"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "sequence", name="uq_workflow_step_runs_sequence"),
+        CheckConstraint(
+            "status IN ('running', 'waiting', 'completed', 'failed')",
+            name="ck_workflow_step_runs_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_steps.id", ondelete="SET NULL"), nullable=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    step_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    step_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    input_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="step_runs")
+    workflow_step: Mapped[WorkflowStep | None] = relationship(foreign_keys=[workflow_step_id])
+
+
+class WorkflowArtifact(Base):
+    __tablename__ = "workflow_artifacts"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "artifact_key", name="uq_workflow_artifacts_run_key"),
+        UniqueConstraint("workflow_run_id", "sequence", name="uq_workflow_artifacts_run_sequence"),
+        CheckConstraint(
+            "artifact_type IN ('workflow_input', 'agent_output', 'human_input', 'tool_output', 'generated_file')",
+            name="ck_workflow_artifacts_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workflow_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_step_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="artifacts")
+    step_run: Mapped[WorkflowStepRun | None] = relationship(foreign_keys=[step_run_id])
 
 
 class Skill(Base):
@@ -271,6 +860,9 @@ class Attachment(Base):
     message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -280,6 +872,28 @@ class Attachment(Base):
 
     tenant: Mapped[Tenant] = relationship(back_populates="attachments")
     message: Mapped[Message | None] = relationship(back_populates="attachments")
+    workflow_run: Mapped[WorkflowRun | None] = relationship(back_populates="attachments")
+
+
+class GeneratedFile(Base):
+    __tablename__ = "generated_files"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False, default="application/pdf")
+    template_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    tenant: Mapped[Tenant] = relationship(back_populates="generated_files")
+    agent: Mapped[Agent | None] = relationship()
 
 
 class Collection(Base):

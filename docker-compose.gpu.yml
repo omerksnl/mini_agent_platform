@@ -1,0 +1,9 @@
+services:
+  backend:
+    image: intern_project-backend-gpu
+    build:
+      args:
+        VISUAL_TENSORFLOW_PACKAGE: tensorflow[and-cuda]==2.20.0
+    environment:
+      TF_FORCE_GPU_ALLOW_GROWTH: "true"
+    gpus: all

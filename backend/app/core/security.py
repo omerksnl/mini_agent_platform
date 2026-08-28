@@ -35,5 +35,26 @@ def decode_access_token(token: str) -> dict[str, Any]:
         raise ValueError("Invalid or expired token") from exc
 
 
+def create_a2a_billing_token(*, user_id: str, credential_id: str, agent_id: str) -> str:
+    settings = get_settings()
+    payload: dict[str, Any] = {
+        "sub": user_id,
+        "credential_id": credential_id,
+        "agent_id": agent_id,
+        "purpose": "a2a-caller-billing",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+
+def decode_a2a_billing_token(token: str, *, agent_id: str) -> dict[str, Any]:
+    payload = decode_access_token(token)
+    if payload.get("purpose") != "a2a-caller-billing" or payload.get("agent_id") != agent_id:
+        raise ValueError("Invalid A2A billing token")
+    if not payload.get("sub") or not payload.get("credential_id"):
+        raise ValueError("Invalid A2A billing token")
+    return payload
+
+
 def parse_uuid(value: str) -> UUID:
     return UUID(value)

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import CurrentUser, get_current_user
 from app.core.services.auth_service import AuthError, AuthService
 from app.db.session import get_db
-from app.schemas.auth import LoginRequest, MeResponse, RegisterRequest, TokenResponse, UserResponse
+from app.schemas.auth import LoginRequest, MeResponse, ProfileUpdateRequest, RegisterRequest, TokenResponse, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -33,3 +33,16 @@ def me(current: CurrentUser = Depends(get_current_user)) -> MeResponse:
         user=UserResponse.model_validate(current.user),
         tenant_name=current.tenant.name,
     )
+
+
+@router.patch("/profile", response_model=MeResponse)
+def update_profile(
+    payload: ProfileUpdateRequest,
+    current: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MeResponse:
+    try:
+        AuthService(db).update_profile(current.user, current.tenant, payload)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return MeResponse(user=UserResponse.model_validate(current.user), tenant_name=current.tenant.name)
