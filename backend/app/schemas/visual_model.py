@@ -94,6 +94,8 @@ class VisualTrainingRunResponse(VisualTrainingRunCreate):
     current_epoch: int
     metrics: dict
     artifact_path: str | None
+    version_number: int | None
+    is_active: bool
     error: str | None
     used_device: Literal["cpu", "gpu"] | None
     device_name: str | None

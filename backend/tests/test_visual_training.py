@@ -1,14 +1,20 @@
 from io import BytesIO
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.api.routes import visual_models as routes
+from app.core.services import visual_training_service as training_module
 from app.core.services.visual_training_service import (
     _normalized_image_array,
+    _trim_visual_versions,
     available_training_devices,
     select_training_device,
 )
+from app.models import VisualModel, VisualTrainingRun
 
 
 class _FakeExperimental:
@@ -168,3 +174,70 @@ def test_prediction_requires_a_trained_model_and_supported_image(client: TestCli
     )
     assert untrained.status_code == 409
     assert "Train this visual model" in untrained.json()["detail"]
+
+
+def test_visual_versions_keep_order_and_can_activate(
+    client: TestClient, db_session_factory, tmp_path, monkeypatch
+) -> None:
+    auth = _register(client)
+    model_payload = client.post("/api/visual-models", headers=auth, json={
+        "name": "Versioned classifier",
+        "description": "version test",
+        "task_type": "image_classification",
+        "architecture": "simple_cnn",
+        "class_names": ["cat", "dog"],
+        "image_width": 64,
+        "image_height": 64,
+        "channels": 3,
+        "use_pretrained_weights": False,
+    }).json()
+    monkeypatch.setattr(
+        training_module, "get_settings", lambda: SimpleNamespace(upload_directory=str(tmp_path))
+    )
+    with db_session_factory() as db:
+        model = db.get(VisualModel, UUID(model_payload["id"]))
+        assert model is not None
+        for number in range(1, 5):
+            relative = f"versions/v{number}.keras"
+            artifact = tmp_path / relative
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_bytes(b"model")
+            db.add(VisualTrainingRun(
+                id=uuid4(),
+                tenant_id=model.tenant_id,
+                visual_model_id=model.id,
+                status="completed",
+                progress=100,
+                epochs=number,
+                batch_size=8,
+                validation_split=0.2,
+                learning_rate=0.001,
+                current_epoch=number,
+                metrics={"accuracy": number / 10},
+                artifact_path=relative,
+                version_number=number,
+                is_active=number == 4,
+                completed_at=datetime.now(timezone.utc),
+            ))
+        db.commit()
+        _trim_visual_versions(db, model.id)
+        assert db.query(VisualTrainingRun).filter_by(visual_model_id=model.id).count() == 3
+        assert not (tmp_path / "versions/v1.keras").exists()
+
+    versions = client.get(
+        f"/api/visual-models/{model_payload['id']}/versions", headers=auth
+    )
+    assert versions.status_code == 200
+    assert [item["version_number"] for item in versions.json()] == [4, 3, 2]
+    target = versions.json()[-1]
+
+    activated = client.post(
+        f"/api/visual-models/{model_payload['id']}/versions/{target['id']}/activate",
+        headers=auth,
+    )
+    assert activated.status_code == 200
+    assert activated.json()["is_active"] is True
+    refreshed = client.get(
+        f"/api/visual-models/{model_payload['id']}/versions", headers=auth
+    ).json()
+    assert [item["version_number"] for item in refreshed if item["is_active"]] == [2]

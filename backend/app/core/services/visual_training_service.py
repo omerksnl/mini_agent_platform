@@ -8,7 +8,7 @@ from uuid import UUID
 
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -136,6 +136,51 @@ class VisualTrainingService:
             raise VisualTrainingError("Training run not found", 404)
         return run
 
+    def versions(self, model_id: UUID, tenant_id: UUID) -> list[VisualTrainingRun]:
+        self._model(model_id, tenant_id)
+        _trim_visual_versions(self.db, model_id)
+        return list(self.db.scalars(
+            select(VisualTrainingRun)
+            .where(
+                VisualTrainingRun.visual_model_id == model_id,
+                VisualTrainingRun.tenant_id == tenant_id,
+                VisualTrainingRun.status == "completed",
+                VisualTrainingRun.artifact_path.is_not(None),
+                VisualTrainingRun.version_number.is_not(None),
+            )
+            .order_by(VisualTrainingRun.version_number.desc())
+            .limit(3)
+        ))
+
+    def activate_version(
+        self, model_id: UUID, run_id: UUID, tenant_id: UUID
+    ) -> VisualTrainingRun:
+        self._model(model_id, tenant_id)
+        run = self.db.scalar(select(VisualTrainingRun).where(
+            VisualTrainingRun.id == run_id,
+            VisualTrainingRun.visual_model_id == model_id,
+            VisualTrainingRun.tenant_id == tenant_id,
+            VisualTrainingRun.status == "completed",
+            VisualTrainingRun.artifact_path.is_not(None),
+        ))
+        if not run:
+            raise VisualTrainingError("Visual model version not found", 404)
+        artifact = Path(get_settings().upload_directory).resolve() / str(run.artifact_path)
+        if not artifact.is_file():
+            raise VisualTrainingError("The selected model artifact is missing", 409)
+        self.db.execute(
+            update(VisualTrainingRun)
+            .where(
+                VisualTrainingRun.visual_model_id == model_id,
+                VisualTrainingRun.tenant_id == tenant_id,
+            )
+            .values(is_active=False)
+        )
+        run.is_active = True
+        self.db.commit()
+        self.db.refresh(run)
+        return run
+
     def predict(self, model_id: UUID, tenant_id: UUID, image_bytes: bytes) -> VisualPredictionResponse:
         model_config = self._model(model_id, tenant_id)
         run = self.db.scalar(
@@ -145,10 +190,22 @@ class VisualTrainingService:
                 VisualTrainingRun.tenant_id == tenant_id,
                 VisualTrainingRun.status == "completed",
                 VisualTrainingRun.artifact_path.is_not(None),
+                VisualTrainingRun.is_active.is_(True),
             )
-            .order_by(VisualTrainingRun.completed_at.desc())
             .limit(1)
         )
+        if not run:
+            run = self.db.scalar(
+                select(VisualTrainingRun)
+                .where(
+                    VisualTrainingRun.visual_model_id == model_id,
+                    VisualTrainingRun.tenant_id == tenant_id,
+                    VisualTrainingRun.status == "completed",
+                    VisualTrainingRun.artifact_path.is_not(None),
+                )
+                .order_by(VisualTrainingRun.completed_at.desc())
+                .limit(1)
+            )
         if not run or not run.artifact_path:
             raise VisualTrainingError("Train this visual model before running a prediction", 409)
         if not image_bytes:
@@ -295,12 +352,25 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
         completed = db.get(VisualTrainingRun, run_id)
         trained_model = db.get(VisualModel, model_config.id)
         if completed and trained_model:
+            latest_version = db.scalar(
+                select(func.max(VisualTrainingRun.version_number)).where(
+                    VisualTrainingRun.visual_model_id == model_config.id
+                )
+            ) or 0
+            db.execute(
+                update(VisualTrainingRun)
+                .where(VisualTrainingRun.visual_model_id == model_config.id)
+                .values(is_active=False)
+            )
             completed.status = "completed"
             completed.progress = 100
             completed.artifact_path = artifact.relative_to(Path(get_settings().upload_directory).resolve()).as_posix()
+            completed.version_number = latest_version + 1
+            completed.is_active = True
             completed.completed_at = datetime.now(timezone.utc)
             trained_model.status = "trained"
             db.commit()
+            _trim_visual_versions(db, model_config.id)
     except Exception as exc:
         logger.exception("Visual training failed for run %s", run_id)
         db.rollback()
@@ -315,6 +385,26 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
             db.commit()
     finally:
         db.close()
+
+
+def _trim_visual_versions(db: Session, model_id: UUID) -> None:
+    versions = list(db.scalars(
+        select(VisualTrainingRun)
+        .where(
+            VisualTrainingRun.visual_model_id == model_id,
+            VisualTrainingRun.status == "completed",
+            VisualTrainingRun.version_number.is_not(None),
+        )
+        .order_by(VisualTrainingRun.version_number.desc())
+    ))
+    upload_root = Path(get_settings().upload_directory).resolve()
+    for obsolete in versions[3:]:
+        if obsolete.artifact_path:
+            artifact = upload_root / obsolete.artifact_path
+            if artifact.is_file():
+                artifact.unlink()
+        db.delete(obsolete)
+    db.commit()
 
 
 def _build_model(tf, config: VisualModel, class_count: int, learning_rate: float):

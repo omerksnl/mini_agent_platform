@@ -39,6 +39,8 @@ export function VisualModelsPage() {
   const [clearDatasetOpen, setClearDatasetOpen] = useState(false);
   const [trainingConfig, setTrainingConfig] = useState<VisualTrainingInput>(defaultTraining);
   const [trainingRun, setTrainingRun] = useState<VisualTrainingRun | null>(null);
+  const [versions, setVersions] = useState<VisualTrainingRun[]>([]);
+  const [activatingVersion, setActivatingVersion] = useState<string | null>(null);
   const [trainingDevices, setTrainingDevices] = useState<VisualComputeDevice[]>([]);
   const [startingTraining, setStartingTraining] = useState(false);
   const [predictionFile, setPredictionFile] = useState<File | null>(null);
@@ -67,11 +69,14 @@ export function VisualModelsPage() {
     const timer = window.setInterval(() => {
       void api.getVisualTrainingRun(trainingRun.id).then((next) => {
         setTrainingRun(next);
-        if (["completed", "failed"].includes(next.status)) void load();
+        if (["completed", "failed"].includes(next.status)) {
+          void load();
+          if (editingId) void api.listVisualModelVersions(editingId).then(setVersions);
+        }
       }).catch((err) => setError(err.message));
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [trainingRun?.id, trainingRun?.status]);
+  }, [trainingRun, editingId]);
 
   useEffect(() => () => {
     cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -158,6 +163,7 @@ export function VisualModelsPage() {
     setDatasetClass("");
     setDatasetNotice("");
     setTrainingRun(null);
+    setVersions([]);
     setTrainingConfig(defaultTraining);
     setDatasetInputKey((value) => value + 1);
     clearPredictionImage();
@@ -188,6 +194,7 @@ export function VisualModelsPage() {
     stopCamera();
     void api.getVisualDataset(model.id).then(setDataset).catch((err) => setError(err.message));
     void api.getLatestVisualTraining(model.id).then(setTrainingRun).catch((err) => setError(err.message));
+    void api.listVisualModelVersions(model.id).then(setVersions).catch((err) => setError(err.message));
     setError("");
   }
 
@@ -202,6 +209,21 @@ export function VisualModelsPage() {
       setError(err instanceof Error ? err.message : "Training could not be started");
     } finally {
       setStartingTraining(false);
+    }
+  }
+
+  async function activateVersion(runId: string) {
+    if (!editingId) return;
+    setActivatingVersion(runId);
+    setError("");
+    try {
+      await api.activateVisualModelVersion(editingId, runId);
+      setVersions(await api.listVisualModelVersions(editingId));
+      setPrediction(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Model version could not be activated");
+    } finally {
+      setActivatingVersion(null);
     }
   }
 
@@ -228,6 +250,14 @@ export function VisualModelsPage() {
     if (value < 1024) return `${value} B`;
     if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
     return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatVersionDate(value: string | null) {
+    if (!value) return "Unknown date";
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
   }
 
   const editingModel = models.find((model) => model.id === editingId);
@@ -326,7 +356,27 @@ export function VisualModelsPage() {
           </section></div>
         </details> : null}
 
-        {editingId && trainingRun?.status === "completed" ? <details className="agent-config-section visual-config-section visual-prediction-details" open>
+        {editingId && versions.length ? <details className="agent-config-section visual-config-section visual-version-details" open>
+          <summary><span>Model versions</span><small>Last {versions.length} of 3 retained</small></summary>
+          <div className="agent-config-content"><section className="visual-version-section">
+            <div className="panel-head"><div><h2>Training history</h2><p className="muted">Compare recent results and choose which trained artifact runs predictions.</p></div></div>
+            <div className="visual-version-list">{versions.map((version) => <article className={`visual-version-card ${version.is_active ? "active" : ""}`} key={version.id}>
+              <div className="visual-version-head">
+                <div><strong>Version {version.version_number}</strong><span>{formatVersionDate(version.completed_at)}</span></div>
+                {version.is_active ? <b>Active</b> : <button className="btn" type="button" disabled={activatingVersion === version.id} onClick={() => void activateVersion(version.id)}>{activatingVersion === version.id ? "Activating..." : "Activate"}</button>}
+              </div>
+              <div className="visual-version-metrics">
+                <div><span>Accuracy</span><strong>{version.metrics.accuracy == null ? "—" : `${(version.metrics.accuracy * 100).toFixed(1)}%`}</strong></div>
+                <div><span>Val accuracy</span><strong>{version.metrics.val_accuracy == null ? "—" : `${(version.metrics.val_accuracy * 100).toFixed(1)}%`}</strong></div>
+                <div><span>Loss</span><strong>{version.metrics.loss == null ? "—" : version.metrics.loss.toFixed(4)}</strong></div>
+                <div><span>Val loss</span><strong>{version.metrics.val_loss == null ? "—" : version.metrics.val_loss.toFixed(4)}</strong></div>
+              </div>
+              <footer><span>{version.epochs} epochs · batch {version.batch_size}</span><span>{version.used_device?.toUpperCase() ?? "—"} · {version.device_name ?? "Unknown device"}</span></footer>
+            </article>)}</div>
+          </section></div>
+        </details> : null}
+
+        {editingId && versions.length ? <details className="agent-config-section visual-config-section visual-prediction-details" open>
           <summary><span>Run model</span><small>{prediction ? `${prediction.predicted_class} · ${(prediction.confidence * 100).toFixed(1)}%` : "Image or camera"}</small></summary>
           <div className="agent-config-content"><section className="visual-prediction-section">
             <div className="panel-head"><div><h2>Test recognition</h2><p className="muted">Use an uploaded image or capture one from this device. Prediction runs locally and does not use API balance.</p></div></div>

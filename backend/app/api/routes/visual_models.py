@@ -89,6 +89,39 @@ def get_latest_visual_training(
         raise HTTPException(exc.status_code, exc.message) from exc
 
 
+@router.get(
+    "/{visual_model_id}/versions",
+    response_model=list[VisualTrainingRunResponse],
+)
+def list_visual_model_versions(
+    visual_model_id: UUID,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+):
+    try:
+        return VisualTrainingService(db).versions(visual_model_id, current.tenant_id)
+    except VisualTrainingError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+
+
+@router.post(
+    "/{visual_model_id}/versions/{run_id}/activate",
+    response_model=VisualTrainingRunResponse,
+)
+def activate_visual_model_version(
+    visual_model_id: UUID,
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+):
+    try:
+        return VisualTrainingService(db).activate_version(
+            visual_model_id, run_id, current.tenant_id
+        )
+    except VisualTrainingError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+
+
 @router.get("/training-runs/{run_id}", response_model=VisualTrainingRunResponse)
 def get_visual_training_run(
     run_id: UUID,

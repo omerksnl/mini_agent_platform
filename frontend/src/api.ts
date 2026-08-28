@@ -145,6 +145,8 @@ export type VisualTrainingRun = {
   current_epoch: number;
   metrics: Record<string, number>;
   artifact_path: string | null;
+  version_number: number | null;
+  is_active: boolean;
   error: string | null;
   created_at: string;
   started_at: string | null;
@@ -592,6 +594,8 @@ export const api = {
   startVisualTraining(id: string, body: VisualTrainingInput) { return request<VisualTrainingRun>(`/api/visual-models/${id}/training-runs`, { method: "POST", body: JSON.stringify(body) }); },
   getLatestVisualTraining(id: string) { return request<VisualTrainingRun | null>(`/api/visual-models/${id}/training-runs/latest`); },
   getVisualTrainingRun(id: string) { return request<VisualTrainingRun>(`/api/visual-models/training-runs/${id}`); },
+  listVisualModelVersions(id: string) { return request<VisualTrainingRun[]>(`/api/visual-models/${id}/versions`); },
+  activateVisualModelVersion(modelId: string, runId: string) { return request<VisualTrainingRun>(`/api/visual-models/${modelId}/versions/${runId}/activate`, { method: "POST" }); },
   getVisualTrainingDevices() { return request<VisualComputeDevice[]>("/api/visual-models/training-devices"); },
   predictVisualModel(id: string, image: File) {
     const body = new FormData();
