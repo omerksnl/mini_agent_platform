@@ -93,6 +93,8 @@ class VisualTrainingRunResponse(VisualTrainingRunCreate):
     progress: int
     current_epoch: int
     metrics: dict
+    training_history: dict
+    evaluation: dict
     artifact_path: str | None
     version_number: int | None
     is_active: bool

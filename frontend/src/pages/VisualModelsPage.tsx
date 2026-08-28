@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { api, type VisualComputeDevice, type VisualDatasetSummary, type VisualModel, type VisualModelInput, type VisualPrediction, type VisualTrainingInput, type VisualTrainingRun } from "../api";
 import { AppHeader } from "../components/AppHeader";
+import { VisualModelDashboard } from "../components/VisualModelDashboard";
 
 const empty: VisualModelInput = {
   name: "",
@@ -23,7 +24,11 @@ const architectureLabels: Record<VisualModelInput["architecture"], string> = {
 
 const defaultTraining: VisualTrainingInput = { epochs: 5, batch_size: 16, validation_split: 0.2, learning_rate: 0.001, requested_device: "auto" };
 
+type VisualEditorSection = "info" | "setup" | "dataset" | "training" | "versions" | "run";
+
 export function VisualModelsPage() {
+  const [workspaceView, setWorkspaceView] = useState<"models" | "dashboard">("models");
+  const [editorSection, setEditorSection] = useState<VisualEditorSection>("info");
   const [models, setModels] = useState<VisualModel[]>([]);
   const [form, setForm] = useState<VisualModelInput>(empty);
   const [classNames, setClassNames] = useState("class_a, class_b");
@@ -155,6 +160,7 @@ export function VisualModelsPage() {
   }
 
   function reset() {
+    setEditorSection("info");
     setEditingId(null);
     setForm(empty);
     setClassNames("class_a, class_b");
@@ -172,6 +178,7 @@ export function VisualModelsPage() {
   }
 
   function edit(model: VisualModel) {
+    setEditorSection("info");
     setEditingId(model.id);
     setForm({
       name: model.name,
@@ -282,6 +289,11 @@ export function VisualModelsPage() {
 
   return <div className="app-shell visual-models-shell">
     <AppHeader />
+    <header className="visual-workspace-header">
+      <div><h1>Visual model workspace</h1><p>Build, train, evaluate, and run image-recognition models.</p></div>
+      <nav aria-label="Visual model sections"><button className={workspaceView === "models" ? "active" : ""} type="button" onClick={() => setWorkspaceView("models")}>Models</button><button className={workspaceView === "dashboard" ? "active" : ""} type="button" onClick={() => setWorkspaceView("dashboard")}>Dashboard</button></nav>
+    </header>
+    {workspaceView === "dashboard" ? <VisualModelDashboard models={models} /> : <>
     <main className="layout visual-model-layout">
       <section className="box panel visual-model-list">
         <div className="panel-head"><div><h1>Visual models</h1><p className="muted">Configure reusable image-recognition models.</p></div><button className="btn btn-primary" type="button" onClick={reset}>New model</button></div>
@@ -300,25 +312,38 @@ export function VisualModelsPage() {
           </header>
           {error ? <div className="error-banner">{error}</div> : null}
 
-          <section className="visual-form-section">
+          <nav className="visual-editor-section-nav" aria-label="Visual model editor sections">
+            {([
+              ["info", "Info", "Basic information"],
+              ["setup", "Setup", "Architecture and input"],
+              ["dataset", "Dataset", "Training images"],
+              ["training", "Train", "Training controls"],
+              ["versions", "Versions", "Model history"],
+              ["run", "Run", "Test recognition"],
+            ] as const).map(([section, label, description]) => {
+              const unavailable = !editingId && !["info", "setup"].includes(section);
+              return <button className={editorSection === section ? "active" : ""} type="button" key={section} disabled={unavailable} title={unavailable ? "Save the model first" : description} onClick={() => setEditorSection(section)}><strong>{label}</strong><small>{description}</small></button>;
+            })}
+          </nav>
+
+          {editorSection === "info" ? <section className="visual-form-section visual-tab-panel">
             <div className="visual-section-heading"><div><h2>Basic information</h2><p>Name the model and define the classes it recognizes.</p></div></div>
             <div className="visual-form-grid"><label>Model name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Dog or cat classifier" required /></label><label>Task type<select value={form.task_type} disabled><option value="image_classification">Image classification</option></select></label></div>
             <label>Description<textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Describe the recognition goal and intended use." /></label>
             <label>Classes<textarea rows={2} value={classNames} onChange={(event) => setClassNames(event.target.value)} placeholder="cat, dog, bird" required/><small>Comma-separated; at least two unique classes.</small></label>
-          </section>
+          </section> : null}
 
-          <section className="visual-form-section visual-model-setup-card">
+          {editorSection === "setup" ? <section className="visual-form-section visual-model-setup-card visual-tab-panel">
             <div className="visual-section-heading"><div><h2>Model setup</h2><p>Choose the architecture and expected image format.</p></div><small>{architectureLabels[form.architecture]} · {form.image_width}×{form.image_height} · {form.channels === 3 ? "RGB" : "Grayscale"}</small></div>
             <fieldset className="vision-architecture-picker"><legend className="sr-only">Architecture</legend>{(["simple_cnn", "mobilenet_v2", "resnet50"] as const).map((architecture) => <label className={form.architecture === architecture ? "selected" : ""} key={architecture}><input type="radio" name="architecture" value={architecture} checked={form.architecture === architecture} onChange={() => setForm({ ...form, architecture, use_pretrained_weights: architecture !== "simple_cnn" })}/><span className="architecture-choice-mark"/><strong>{architectureLabels[architecture]}</strong><small>{architecture === "simple_cnn" ? "Lightweight · from scratch" : architecture === "mobilenet_v2" ? "Efficient · recommended" : "Higher capacity · deeper"}</small></label>)}</fieldset>
             <div className="visual-input-grid"><label>Image width<input className="clean-number-input" type="number" min={32} max={2048} value={form.image_width} onChange={(event) => setForm({ ...form, image_width: Number(event.target.value) })} required /></label><label>Image height<input className="clean-number-input" type="number" min={32} max={2048} value={form.image_height} onChange={(event) => setForm({ ...form, image_height: Number(event.target.value) })} required /></label><label>Color mode<select value={form.channels} onChange={(event) => setForm({ ...form, channels: Number(event.target.value) as 1 | 3 })}><option value={3}>RGB · 3 channels</option><option value={1}>Grayscale · 1 channel</option></select></label></div>
             <label className="visual-pretrained-toggle"><input type="checkbox" checked={form.use_pretrained_weights} disabled={form.architecture === "simple_cnn"} onChange={(event) => setForm({ ...form, use_pretrained_weights: event.target.checked })}/><span><strong>Use pretrained ImageNet weights</strong><small>Start from learned visual features for faster, stronger transfer learning.</small></span></label>
-          </section>
+          </section> : null}
 
-          <div className="visual-save-bar"><span>{editingId ? "Your dataset remains unchanged when this configuration is saved." : "Save to add images and start training."}</span><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Saving..." : editingId ? "Save changes" : "Create model"}</button></div>
+          {editorSection === "info" || editorSection === "setup" ? <div className="visual-save-bar"><span>{editingId ? "Your dataset remains unchanged when this configuration is saved." : "Save to add images and start training."}</span><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Saving..." : editingId ? "Save changes" : "Create model"}</button></div> : null}
         </form>
 
-        {editingId && dataset ? <details className="agent-config-section visual-config-section visual-dataset-details">
-          <summary><span>Image dataset</span><small>{dataset.total_images} images · {dataset.classes.filter((item) => item.image_count > 0).length}/{dataset.classes.length} classes · {dataset.ready_for_training ? "Ready" : "Needs images"}</small></summary>
+        {editingId && dataset && editorSection === "dataset" ? <section className="agent-config-section visual-config-section visual-tab-panel visual-dataset-details">
           <div className="agent-config-content"><section className="visual-dataset-section">
             <div className="panel-head"><div><h2>Image dataset</h2><p className="muted">Stored locally and isolated to this tenant and model.</p></div><span className={`dataset-ready-badge ${dataset.ready_for_training ? "ready" : ""}`}>{dataset.ready_for_training ? "Ready" : "Needs images"}</span></div>
             <div className="dataset-totals"><div><strong>{dataset.total_images}</strong><span>Total images</span></div><div><strong>{formatBytes(dataset.total_bytes)}</strong><span>Stored size</span></div><div><strong>{dataset.classes.filter((item) => item.image_count > 0).length}/{dataset.classes.length}</strong><span>Classes populated</span></div></div>
@@ -331,10 +356,9 @@ export function VisualModelsPage() {
               <div className="form-actions"><button className="btn" type="button" disabled={!dataset.total_images} onClick={() => setClearDatasetOpen(true)}>Clear dataset</button><button className="btn btn-primary" type="button" disabled={!datasetFiles.length || uploadingDataset} onClick={() => void uploadDataset()}>{uploadingDataset ? "Uploading..." : "Upload dataset"}</button></div>
             </div>
           </section></div>
-        </details> : null}
+        </section> : null}
 
-        {editingId && dataset ? <details className="agent-config-section visual-config-section visual-training-details">
-          <summary><span>Training</span><small>{trainingRun ? `${trainingRun.status} · ${trainingRun.progress}%` : dataset.ready_for_training ? "Ready to start" : "Dataset not ready"}</small></summary>
+        {editingId && dataset && editorSection === "training" ? <section className="agent-config-section visual-config-section visual-tab-panel visual-training-details">
           <div className="agent-config-content"><section className="visual-training-section">
             <div className="panel-head"><div><h2>Train model</h2><p className="muted">Runs locally in the background and does not use an LLM or API balance.</p></div><span className={`training-status-badge ${trainingRun?.status ?? "idle"}`}>{trainingRun?.status ?? "Not started"}</span></div>
             <div className="visual-training-grid">
@@ -354,13 +378,12 @@ export function VisualModelsPage() {
             </div> : null}
             <div className="form-actions"><button className="btn btn-primary" type="button" disabled={!dataset.ready_for_training || startingTraining || trainingRun?.status === "queued" || trainingRun?.status === "running"} onClick={() => void startTraining()}>{startingTraining ? "Starting..." : trainingRun?.status === "completed" || trainingRun?.status === "failed" ? "Train again" : "Start training"}</button></div>
           </section></div>
-        </details> : null}
+        </section> : null}
 
-        {editingId && versions.length ? <details className="agent-config-section visual-config-section visual-version-details" open>
-          <summary><span>Model versions</span><small>Last {versions.length} of 3 retained</small></summary>
+        {editingId && editorSection === "versions" ? <section className="agent-config-section visual-config-section visual-tab-panel visual-version-details">
           <div className="agent-config-content"><section className="visual-version-section">
             <div className="panel-head"><div><h2>Training history</h2><p className="muted">Compare recent results and choose which trained artifact runs predictions.</p></div></div>
-            <div className="visual-version-list">{versions.map((version) => <article className={`visual-version-card ${version.is_active ? "active" : ""}`} key={version.id}>
+            {!versions.length ? <div className="guardrail-empty"><strong>No trained versions yet</strong><span>Train the model to create its first version.</span></div> : <div className="visual-version-list">{versions.map((version) => <article className={`visual-version-card ${version.is_active ? "active" : ""}`} key={version.id}>
               <div className="visual-version-head">
                 <div><strong>Version {version.version_number}</strong><span>{formatVersionDate(version.completed_at)}</span></div>
                 {version.is_active ? <b>Active</b> : <button className="btn" type="button" disabled={activatingVersion === version.id} onClick={() => void activateVersion(version.id)}>{activatingVersion === version.id ? "Activating..." : "Activate"}</button>}
@@ -372,14 +395,14 @@ export function VisualModelsPage() {
                 <div><span>Val loss</span><strong>{version.metrics.val_loss == null ? "—" : version.metrics.val_loss.toFixed(4)}</strong></div>
               </div>
               <footer><span>{version.epochs} epochs · batch {version.batch_size}</span><span>{version.used_device?.toUpperCase() ?? "—"} · {version.device_name ?? "Unknown device"}</span></footer>
-            </article>)}</div>
+            </article>)}</div>}
           </section></div>
-        </details> : null}
+        </section> : null}
 
-        {editingId && versions.length ? <details className="agent-config-section visual-config-section visual-prediction-details" open>
-          <summary><span>Run model</span><small>{prediction ? `${prediction.predicted_class} · ${(prediction.confidence * 100).toFixed(1)}%` : "Image or camera"}</small></summary>
+        {editingId && editorSection === "run" ? <section className="agent-config-section visual-config-section visual-tab-panel visual-prediction-details">
           <div className="agent-config-content"><section className="visual-prediction-section">
             <div className="panel-head"><div><h2>Test recognition</h2><p className="muted">Use an uploaded image or capture one from this device. Prediction runs locally and does not use API balance.</p></div></div>
+            {!versions.length ? <div className="error-banner">Train the model before running recognition.</div> : null}
             <div className="prediction-source-actions">
               <label className="btn prediction-upload-button">Choose image<input ref={predictionInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => selectPredictionImage(event.target.files?.[0] ?? null)}/></label>
               <button className="btn" type="button" onClick={() => void (cameraOpen ? Promise.resolve(stopCamera()) : openCamera())}>{cameraOpen ? "Close camera" : "Use camera"}</button>
@@ -388,11 +411,12 @@ export function VisualModelsPage() {
             {cameraOpen ? <div className="camera-capture-card"><video ref={cameraVideoRef} autoPlay playsInline muted/><button className="btn btn-primary" type="button" onClick={captureCameraImage}>Capture image</button></div> : null}
             {predictionPreview ? <div className="prediction-preview-card"><img src={predictionPreview} alt="Selected prediction input"/><div><strong>{predictionFile?.name}</strong><span>Ready for recognition</span><button type="button" onClick={clearPredictionImage}>Remove image</button></div></div> : null}
             {prediction ? <div className="prediction-result-card"><div className="prediction-result-head"><span>Prediction</span><strong>{prediction.predicted_class}</strong><b>{(prediction.confidence * 100).toFixed(1)}% confidence</b></div><div className="prediction-score-list">{prediction.scores.map((score) => <div key={score.class_name}><span>{score.class_name}</span><div><i style={{ width: `${score.probability * 100}%` }}/></div><strong>{(score.probability * 100).toFixed(1)}%</strong></div>)}</div></div> : null}
-            <div className="form-actions"><button className="btn btn-primary" type="button" disabled={!predictionFile || predicting} onClick={() => void runPrediction()}>{predicting ? "Recognizing..." : "Run recognition"}</button></div>
+            <div className="form-actions"><button className="btn btn-primary" type="button" disabled={!versions.length || !predictionFile || predicting} onClick={() => void runPrediction()}>{predicting ? "Recognizing..." : "Run recognition"}</button></div>
           </section></div>
-        </details> : null}
+        </section> : null}
       </section>
     </main>
+    </>}
 
     {deleteTarget ? <div className="modal-backdrop"><div className="box modal"><h2>Delete visual model?</h2><p><strong>{deleteTarget.name}</strong> and every image in its dataset will be permanently removed.</p><div className="modal-actions"><button className="btn" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button><button className="btn btn-primary" type="button" onClick={async () => { await api.deleteVisualModel(deleteTarget.id); if (editingId === deleteTarget.id) reset(); setDeleteTarget(null); await load(); }}>Delete</button></div></div></div> : null}
     {clearDatasetOpen && editingId ? <div className="modal-backdrop"><div className="box modal"><h2>Clear image dataset?</h2><p>Every uploaded image for this visual model will be permanently removed. The model configuration will remain.</p><div className="modal-actions"><button className="btn" type="button" onClick={() => setClearDatasetOpen(false)}>Cancel</button><button className="btn btn-primary" type="button" onClick={async () => { await api.clearVisualDataset(editingId); setDataset(await api.getVisualDataset(editingId)); setClearDatasetOpen(false); setDatasetNotice("Dataset cleared."); await load(); }}>Clear dataset</button></div></div></div> : null}

@@ -269,6 +269,8 @@ class VisualTrainingRun(Base):
     device_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     current_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    training_history: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evaluation: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     artifact_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

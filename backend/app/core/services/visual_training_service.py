@@ -181,6 +181,39 @@ class VisualTrainingService:
         self.db.refresh(run)
         return run
 
+    def evaluate_version(
+        self, model_id: UUID, run_id: UUID, tenant_id: UUID
+    ) -> VisualTrainingRun:
+        model_config = self._model(model_id, tenant_id)
+        run = self.db.scalar(select(VisualTrainingRun).where(
+            VisualTrainingRun.id == run_id,
+            VisualTrainingRun.visual_model_id == model_id,
+            VisualTrainingRun.tenant_id == tenant_id,
+            VisualTrainingRun.status == "completed",
+            VisualTrainingRun.artifact_path.is_not(None),
+        ))
+        if not run or not run.artifact_path:
+            raise VisualTrainingError("Visual model version not found", 404)
+        artifact = Path(get_settings().upload_directory).resolve() / run.artifact_path
+        if not artifact.is_file():
+            raise VisualTrainingError("The selected model artifact is missing", 409)
+        try:
+            import tensorflow as tf
+
+            val_ds = _validation_dataset(tf, model_config, run, tenant_id)
+            keras_model = tf.keras.models.load_model(artifact)
+            run.evaluation = _evaluate_model(
+                keras_model, val_ds, list(model_config.class_names)
+            )
+            self.db.commit()
+            self.db.refresh(run)
+            return run
+        except VisualTrainingError:
+            raise
+        except Exception as exc:
+            logger.exception("Visual version evaluation failed for run %s", run_id)
+            raise VisualTrainingError("This model version could not be evaluated") from exc
+
     def predict(self, model_id: UUID, tenant_id: UUID, image_bytes: bytes) -> VisualPredictionResponse:
         model_config = self._model(model_id, tenant_id)
         run = self.db.scalar(
@@ -328,17 +361,26 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
                             for key, value in (logs or {}).items()
                             if value is not None
                         }
+                        history = dict(current.training_history or {})
+                        for key, value in (logs or {}).items():
+                            if value is None:
+                                continue
+                            history.setdefault(key, []).append(round(float(value), 6))
+                        current.training_history = history
                         callback_db.commit()
                 finally:
                     callback_db.close()
 
         with tf.device(device_path):
-            keras_model.fit(
+            fit_history = keras_model.fit(
                 train_ds,
                 validation_data=val_ds,
                 epochs=run.epochs,
                 callbacks=[ProgressCallback()],
                 verbose=0,
+            )
+            evaluation = _evaluate_model(
+                keras_model, val_ds, list(model_config.class_names)
             )
         artifact_directory = (
             Path(get_settings().upload_directory).resolve()
@@ -364,7 +406,15 @@ def execute_visual_training(run_id: UUID, tenant_id: UUID) -> None:
             )
             completed.status = "completed"
             completed.progress = 100
+            # Keras owns the authoritative full epoch history. Persist it once at
+            # completion as well as emitting live callback progress; this avoids
+            # losing intermediate JSON updates across callback DB sessions.
+            completed.training_history = {
+                key: [round(float(value), 6) for value in values]
+                for key, values in fit_history.history.items()
+            }
             completed.artifact_path = artifact.relative_to(Path(get_settings().upload_directory).resolve()).as_posix()
+            completed.evaluation = evaluation
             completed.version_number = latest_version + 1
             completed.is_active = True
             completed.completed_at = datetime.now(timezone.utc)
@@ -405,6 +455,97 @@ def _trim_visual_versions(db: Session, model_id: UUID) -> None:
                 artifact.unlink()
         db.delete(obsolete)
     db.commit()
+
+
+def _validation_dataset(tf, config: VisualModel, run: VisualTrainingRun, tenant_id: UUID):
+    dataset_root = (
+        Path(get_settings().upload_directory).resolve()
+        / "visual-datasets" / str(tenant_id) / str(config.id)
+    )
+    return tf.keras.utils.image_dataset_from_directory(
+        directory=str(dataset_root),
+        labels="inferred",
+        label_mode="int",
+        class_names=list(config.class_names),
+        validation_split=run.validation_split,
+        subset="validation",
+        seed=42,
+        image_size=(config.image_height, config.image_width),
+        batch_size=run.batch_size,
+        color_mode="rgb" if config.channels == 3 else "grayscale",
+        shuffle=False,
+    ).prefetch(tf.data.AUTOTUNE)
+
+
+def _evaluate_model(keras_model, validation_dataset, class_names: list[str]) -> dict:
+    labels: list[int] = []
+    probabilities: list[list[float]] = []
+    for images, batch_labels in validation_dataset:
+        batch_probabilities = keras_model.predict_on_batch(images)
+        labels.extend(np.asarray(batch_labels).astype(int).tolist())
+        probabilities.extend(np.asarray(batch_probabilities).astype(float).tolist())
+    return _evaluation_payload(class_names, np.asarray(labels), np.asarray(probabilities))
+
+
+def _evaluation_payload(
+    class_names: list[str], labels: np.ndarray, probabilities: np.ndarray
+) -> dict:
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        confusion_matrix,
+        precision_recall_fscore_support,
+    )
+
+    if not labels.size or probabilities.ndim != 2:
+        raise VisualTrainingError("The validation set contains no evaluable images")
+    predictions = probabilities.argmax(axis=1)
+    indexes = list(range(len(class_names)))
+    precision, recall, f1, support = precision_recall_fscore_support(
+        labels, predictions, labels=indexes, zero_division=0
+    )
+    macro = precision_recall_fscore_support(
+        labels, predictions, average="macro", zero_division=0
+    )
+    weighted = precision_recall_fscore_support(
+        labels, predictions, average="weighted", zero_division=0
+    )
+    confidence = probabilities.max(axis=1)
+    histogram, boundaries = np.histogram(confidence, bins=np.linspace(0, 1, 6))
+    return {
+        "sample_count": int(labels.size),
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "accuracy": round(float(accuracy_score(labels, predictions)), 6),
+            "balanced_accuracy": round(float(balanced_accuracy_score(labels, predictions)), 6),
+            "macro_precision": round(float(macro[0]), 6),
+            "macro_recall": round(float(macro[1]), 6),
+            "macro_f1": round(float(macro[2]), 6),
+            "weighted_precision": round(float(weighted[0]), 6),
+            "weighted_recall": round(float(weighted[1]), 6),
+            "weighted_f1": round(float(weighted[2]), 6),
+        },
+        "classes": [
+            {
+                "class_name": name,
+                "precision": round(float(precision[index]), 6),
+                "recall": round(float(recall[index]), 6),
+                "f1": round(float(f1[index]), 6),
+                "support": int(support[index]),
+            }
+            for index, name in enumerate(class_names)
+        ],
+        "confusion_matrix": confusion_matrix(
+            labels, predictions, labels=indexes
+        ).astype(int).tolist(),
+        "confidence_histogram": {
+            "labels": [
+                f"{boundaries[index]:.1f}–{boundaries[index + 1]:.1f}"
+                for index in range(len(boundaries) - 1)
+            ],
+            "counts": histogram.astype(int).tolist(),
+        },
+    }
 
 
 def _build_model(tf, config: VisualModel, class_count: int, learning_rate: float):

@@ -1,5 +1,6 @@
 services:
   backend:
+    image: intern_project-backend-gpu
     build:
       args:
         VISUAL_TENSORFLOW_PACKAGE: tensorflow[and-cuda]==2.20.0

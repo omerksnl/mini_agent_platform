@@ -122,6 +122,24 @@ def activate_visual_model_version(
         raise HTTPException(exc.status_code, exc.message) from exc
 
 
+@router.post(
+    "/{visual_model_id}/versions/{run_id}/evaluate",
+    response_model=VisualTrainingRunResponse,
+)
+def evaluate_visual_model_version(
+    visual_model_id: UUID,
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current: CurrentUser = Depends(get_current_user),
+):
+    try:
+        return VisualTrainingService(db).evaluate_version(
+            visual_model_id, run_id, current.tenant_id
+        )
+    except VisualTrainingError as exc:
+        raise HTTPException(exc.status_code, exc.message) from exc
+
+
 @router.get("/training-runs/{run_id}", response_model=VisualTrainingRunResponse)
 def get_visual_training_run(
     run_id: UUID,

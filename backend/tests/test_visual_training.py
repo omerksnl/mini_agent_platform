@@ -5,11 +5,13 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from PIL import Image
+import numpy as np
 
 from app.api.routes import visual_models as routes
 from app.core.services import visual_training_service as training_module
 from app.core.services.visual_training_service import (
     _normalized_image_array,
+    _evaluation_payload,
     _trim_visual_versions,
     available_training_devices,
     select_training_device,
@@ -27,6 +29,20 @@ class _FakeExperimental:
 
     def get_device_details(self, device) -> dict[str, str]:
         return {"device_name": "Test GPU"}
+
+
+def test_evaluation_payload_contains_dashboard_metrics() -> None:
+    payload = _evaluation_payload(
+        ["cat", "dog"],
+        np.asarray([0, 0, 1, 1]),
+        np.asarray([[.9, .1], [.4, .6], [.2, .8], [.1, .9]]),
+    )
+
+    assert payload["sample_count"] == 4
+    assert payload["confusion_matrix"] == [[1, 1], [0, 2]]
+    assert payload["summary"]["accuracy"] == .75
+    assert payload["classes"][1]["recall"] == 1.0
+    assert sum(payload["confidence_histogram"]["counts"]) == 4
 
 
 class _FakeConfig:

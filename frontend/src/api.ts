@@ -144,6 +144,8 @@ export type VisualTrainingRun = {
   device_name: string | null;
   current_epoch: number;
   metrics: Record<string, number>;
+  training_history: Record<string, number[]>;
+  evaluation: VisualModelEvaluation | Record<string, never>;
   artifact_path: string | null;
   version_number: number | null;
   is_active: boolean;
@@ -151,6 +153,30 @@ export type VisualTrainingRun = {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+};
+
+export type VisualModelEvaluation = {
+  sample_count: number;
+  evaluated_at: string;
+  summary: {
+    accuracy: number;
+    balanced_accuracy: number;
+    macro_precision: number;
+    macro_recall: number;
+    macro_f1: number;
+    weighted_precision: number;
+    weighted_recall: number;
+    weighted_f1: number;
+  };
+  classes: Array<{
+    class_name: string;
+    precision: number;
+    recall: number;
+    f1: number;
+    support: number;
+  }>;
+  confusion_matrix: number[][];
+  confidence_histogram: { labels: string[]; counts: number[] };
 };
 
 export type VisualComputeDevice = {
@@ -596,6 +622,7 @@ export const api = {
   getVisualTrainingRun(id: string) { return request<VisualTrainingRun>(`/api/visual-models/training-runs/${id}`); },
   listVisualModelVersions(id: string) { return request<VisualTrainingRun[]>(`/api/visual-models/${id}/versions`); },
   activateVisualModelVersion(modelId: string, runId: string) { return request<VisualTrainingRun>(`/api/visual-models/${modelId}/versions/${runId}/activate`, { method: "POST" }); },
+  evaluateVisualModelVersion(modelId: string, runId: string) { return request<VisualTrainingRun>(`/api/visual-models/${modelId}/versions/${runId}/evaluate`, { method: "POST" }); },
   getVisualTrainingDevices() { return request<VisualComputeDevice[]>("/api/visual-models/training-devices"); },
   predictVisualModel(id: string, image: File) {
     const body = new FormData();
