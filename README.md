@@ -14,9 +14,6 @@
 
 Mini Agent Platform is a multi-tenant AI workspace for configuring agents, reusable knowledge, tools, safety controls, multi-agent systems, visual workflows, A2A connections, and trainable image-classification models. It combines React with FastAPI, PostgreSQL, Redis, LangGraph, optional Langfuse tracing, and Docker deployment.
 
-> [!IMPORTANT]
-> Keep real API keys in `backend/.env`. Never commit that file or paste secrets into issues, screenshots, or documentation.
-
 ## Navigation
 
 | Workspace | Purpose | Local link |
